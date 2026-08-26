@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasAppAccess() {
+      return request.auth != null && request.auth.token.appAccess == true;
+    }
+
+    match /datasets/{datasetId} {
+      allow read: if hasAppAccess();
+      allow write: if false;
+    }
+
+    match /ingestionJobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if hasAppAccess() && request.auth.uid == userId;
+    }
+  }
+}
+

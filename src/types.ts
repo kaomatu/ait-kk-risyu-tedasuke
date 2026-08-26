@@ -1,0 +1,117 @@
+export type Term = "spring" | "fall" | "full_year";
+export type ActiveTerm = "spring" | "fall";
+export type RequirementType = "required" | "required_elective" | "elective" | "non_counting";
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri";
+
+export interface Offering {
+  id: string;
+  term: ActiveTerm;
+  classCode: string;
+  weekday: Weekday;
+  periods: number[];
+  lottery: boolean;
+  room?: string;
+  instructor?: string;
+}
+
+export interface Course {
+  id: string;
+  code: string;
+  name: string;
+  credits: number;
+  category: "specialized" | "general";
+  requirementType: RequirementType;
+  recommendedGrade: number;
+  recommendedTerm: Term;
+  tags?: string[];
+  hardPrerequisites?: string[];
+  softPrerequisites?: string[];
+  /** 選択必修を「最初の1科目は必修、以降は選択」と集計するための科目群ID。 */
+  requiredElectiveGroup?: string;
+  /** false の科目は学期・年間の履修上限に算入しない。単位要件への算入とは別に管理する。 */
+  countsTowardCreditCap?: boolean;
+  countForProgression?: boolean;
+  countForGraduation?: boolean;
+  offerings: Offering[];
+}
+
+export interface Dataset {
+  datasetVersionId: string;
+  status: "published" | string;
+  sourceStatus: string;
+  program: {
+    faculty: string;
+    department: string;
+    name: string;
+    code: string;
+    entryDate: string;
+  };
+  policies: {
+    termCap: number;
+    normalAnnualCap: number;
+    honorsAnnualCap: number;
+    honorsGpaThreshold: number;
+    progression: Array<{ toGrade: number; minCredits: number; minGpa?: number }>;
+    graduation: {
+      specializedRequired: number;
+      specializedElective: number;
+      specializedTotal: number;
+      generalRequired: number;
+      generalElective: number;
+      generalTotal: number;
+      english: number;
+      total: number;
+    };
+  };
+  courses: Course[];
+}
+
+export interface StudentProfile {
+  currentGrade: number;
+  term: ActiveTerm;
+  gpa: number | null;
+  annualCapBonusLocked: boolean;
+  completedCourseIds: string[];
+  wanted: Record<string, "must" | "prefer">;
+  rechallengeCourseIds: string[];
+  lotteryStates: Record<string, "none" | "applied" | "lost" | "won">;
+  hardBlockedSlots: string[];
+  softBlockedSlots: string[];
+  annualRegisteredCredits: number;
+}
+
+export interface PlanItem {
+  course: Course;
+  offering: Offering;
+  priority: "must" | "prefer" | "suggested";
+}
+
+export interface RejectedCourse {
+  course: Course;
+  reasons: string[];
+}
+
+export interface PlanResult {
+  selected: PlanItem[];
+  rejected: RejectedCourse[];
+  warnings: string[];
+  capCountedCredits: number;
+  lotteryCredits: number;
+}
+
+export const weekdayLabels: Record<Weekday, string> = {
+  mon: "月",
+  tue: "火",
+  wed: "水",
+  thu: "木",
+  fri: "金",
+};
+
+export const termLabels: Record<ActiveTerm, string> = {
+  spring: "前期",
+  fall: "後期",
+};
+
+export function slotKey(weekday: Weekday, period: number) {
+  return `${weekday}-${period}`;
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.firebase/
+.env
+.env.*
+!.env.example
+coverage/
+functions/lib/
+functions/node_modules/
+functions/.secret.local
+
