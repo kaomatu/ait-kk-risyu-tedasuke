@@ -111,7 +111,10 @@ export const kkSeedCourses: SeedCourse[] = [
   specialized("K2058", "微分積分Ⅰ", 2, "elective", 1, "spring"),
   specialized("K2059", "微分積分Ⅱ", 2, "elective", 1, "fall", [], ["ait.kk.K2058"]),
   specialized("K2060", "線形代数Ⅰ", 2, "elective", 1, "spring"),
-  specialized("K2061", "線形代数Ⅱ", 2, "elective", 1, "fall", [], ["ait.kk.K2060"]),
+  specialized("K2061", "線形代数Ⅱ", 2, "elective", 1, "fall", [
+    { id: "2026-fall-K2061-11", term: "fall", classCode: "11", weekday: "tue", periods: [3], lottery: false, room: "G2507", instructor: "南 範彦" },
+    { id: "2026-fall-K2061-21", term: "fall", classCode: "21", weekday: "tue", periods: [3], lottery: false, room: "G2505", instructor: "伊藤 健" },
+  ], [], ["ait.kk.K2060"]),
   specialized("K2062", "確率統計Ⅰ", 2, "elective", 2, "spring"),
   specialized("K2063", "幾何学", 2, "elective", 2, "spring"),
   specialized("K2049", "人工知能", 2, "elective", 2, "fall", [
