@@ -59,7 +59,9 @@ export const authenticateWithPassphrase = onCall(
     rateLimit(remoteAddress);
     const password = request.data && typeof request.data.password === "string" ? request.data.password : "";
     const deviceId = request.data && typeof request.data.deviceId === "string" ? request.data.deviceId : "";
-    const expected = APP_ACCESS_PASSWORD.value();
+    // Firebase CLIの --data-file で登録した値に付く改行だけを除去する。
+    // パスワード本文の空白は変更しない。
+    const expected = APP_ACCESS_PASSWORD.value().replace(/\r?\n$/, "");
 
     if (!password || !expected || !deviceId || deviceId.length > 128 || !passwordsMatch(password, expected)) {
       throw new HttpsError("permission-denied", "パスワードが正しくありません。");

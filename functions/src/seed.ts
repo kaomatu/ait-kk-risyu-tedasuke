@@ -52,7 +52,7 @@ const specialized = (
   offerings,
   hardPrerequisites,
   softPrerequisites,
-  requiredElectiveGroup,
+  ...(requiredElectiveGroup ? { requiredElectiveGroup } : {}),
 });
 
 const general = (
