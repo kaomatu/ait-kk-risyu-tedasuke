@@ -36,6 +36,10 @@ function labelRequirement(course: Course) {
   return course.requirementType === "required" ? "必修" : course.requirementType === "required_elective" ? "選択必修" : course.requirementType === "non_counting" ? "要件外" : "選択";
 }
 
+function displayCourseCode(course: Course) {
+  return course.officialCode === false ? "資料コード未確認" : course.code;
+}
+
 function statusClass(course: Course, profile: StudentProfile) {
   if (profile.completedCourseIds.includes(course.id)) return "completed";
   if ((course.hardPrerequisites ?? []).some((id) => !profile.completedCourseIds.includes(id))) return "blocked";
@@ -300,8 +304,16 @@ function IngestionTool({ localPreview, onMessage }: { localPreview: boolean; onM
 
 function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, onSave }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult | null; progress: ReturnType<typeof calculateProgress> | null; patchProfile: (patch: Partial<StudentProfile>) => void; onGenerate: () => void; onSave: () => void }) {
   const catalogByGrade = [1, 2, 3, 4].map((grade) => ({ grade, courses: dataset.courses.filter((course) => course.recommendedGrade === grade) }));
-  const termCourses = dataset.courses.filter((course) => course.offerings.some((offering) => offering.term === profile.term));
-  const lotteryCourses = termCourses.filter((course) => course.offerings.some((offering) => offering.lottery));
+  const termCourses = dataset.courses.filter((course) => course.offerings.some((offering) => (
+    offering.term === profile.term
+    && offering.eligibleForProgram !== false
+    && (!offering.rechallengeOnly || profile.rechallengeCourseIds.includes(course.id))
+  )));
+  const lotteryCourses = termCourses.filter((course) => course.offerings.some((offering) => (
+    offering.lottery
+    && offering.eligibleForProgram !== false
+    && (!offering.rechallengeOnly || profile.rechallengeCourseIds.includes(course.id))
+  )));
   const annualCap = activeAnnualCap(dataset, profile);
 
   function toggleWanted(course: Course) {
@@ -350,9 +362,9 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, o
     <section className="planner-layout">
       <div className="planner-main">
         <article className="section-card"><div className="section-heading"><div><p className="eyebrow">CURRICULUM TREE</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-completed" />修得済 <i className="legend-wanted" />希望 <i className="legend-blocked" />前提未達</span></div>
-          <div className="tree-grid">{catalogByGrade.map(({ grade, courses }) => <section className="tree-column" key={grade}><h3>{grade}年次</h3>{courses.map((course) => <button key={course.id} className={`course-card ${statusClass(course, profile)} ${profile.wanted[course.id] ?? ""}`} onClick={() => toggleWanted(course)}><span className="course-code">{course.code}</span><strong>{course.name}</strong><small>{course.credits}単位 / {labelRequirement(course)} / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}</small>{profile.wanted[course.id] && <em>{profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}</button>)}</section>)}</div>
+          <div className="tree-grid">{catalogByGrade.map(({ grade, courses }) => <section className="tree-column" key={grade}><h3>{grade}年次</h3>{courses.map((course) => <button key={course.id} className={`course-card ${statusClass(course, profile)} ${profile.wanted[course.id] ?? ""}`} onClick={() => toggleWanted(course)}><span className="course-code">{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位 / {labelRequirement(course)} / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}</small>{profile.wanted[course.id] && <em>{profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}</button>)}</section>)}</div>
         </article>
-        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COMPLETED HISTORY</p><h2>修得済みの科目</h2></div><span className="pill">選択式入力</span></div><p>カタログから科目を選択して修得履歴を入力します。自由入力は使いません。</p><div className="history-list">{dataset.courses.map((course) => <label key={course.id} className="history-item"><input type="checkbox" checked={profile.completedCourseIds.includes(course.id)} onChange={() => toggleCompleted(course.id)} /> <span>{course.code}</span><strong>{course.name}</strong><small>{course.credits}単位</small></label>)}</div>{profile.completedCourseIds.length > 0 && <div className="rechallenge-list"><p><b>再チャレンジ履修</b>（修得済みでも今期にもう一度履修する科目）</p>{profile.completedCourseIds.map((id) => { const course = dataset.courses.find((item) => item.id === id); return course ? <label key={id} className="mini-check"><input type="checkbox" checked={profile.rechallengeCourseIds.includes(id)} onChange={() => toggleRechallenge(id)} /> {course.name}</label> : null; })}</div>}</article>
+        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COMPLETED HISTORY</p><h2>修得済みの科目</h2></div><span className="pill">選択式入力</span></div><p>カタログから科目を選択して修得履歴を入力します。自由入力は使いません。</p><div className="history-list">{dataset.courses.map((course) => <label key={course.id} className="history-item"><input type="checkbox" checked={profile.completedCourseIds.includes(course.id)} onChange={() => toggleCompleted(course.id)} /> <span>{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位</small></label>)}</div>{profile.completedCourseIds.length > 0 && <div className="rechallenge-list"><p><b>再チャレンジ履修</b>（修得済みでも今期にもう一度履修する科目）</p>{profile.completedCourseIds.map((id) => { const course = dataset.courses.find((item) => item.id === id); return course ? <label key={id} className="mini-check"><input type="checkbox" checked={profile.rechallengeCourseIds.includes(id)} onChange={() => toggleRechallenge(id)} /> {course.name}</label> : null; })}</div>}</article>
       </div>
       <aside className="planner-side">
         <article className="section-card"><p className="eyebrow">FREE TIME</p><h2>空けたい時限</h2><p className="compact">クリック: 固定で空ける → できれば空ける → 解除</p><div className="slot-grid"><span />{weekdays.map((day) => <span className="slot-header" key={day}>{weekdayLabels[day]}</span>)}{periods.map((period) => <Fragment key={`period-${period}`}><span className="period-label">{period}</span>{weekdays.map((day) => { const key = slotKey(day, period); const mode = profile.hardBlockedSlots.includes(key) ? "hard" : profile.softBlockedSlots.includes(key) ? "soft" : ""; return <button key={key} className={`slot ${mode}`} onClick={() => cycleSlot(day, period)} aria-label={`${weekdayLabels[day]}曜日${period}限`}>{mode === "hard" ? "空" : mode === "soft" ? "△" : ""}</button>; })}</Fragment>)}</div><div className="slot-caption"><span>空 = 固定</span><span>△ = できれば</span></div></article>
@@ -368,7 +380,7 @@ function PlanResultView({ dataset, profile, plan }: { dataset: Dataset; profile:
   const annualCap = activeAnnualCap(dataset, profile);
   return <section className="plan-result"><div className="section-heading"><div><p className="eyebrow">PLAN RESULT</p><h2>今学期の履修案</h2></div><span className={plan.rejected.length ? "pill warning" : "pill success"}>{plan.rejected.length ? "注意あり" : "登録可能"}</span></div>
     <div className="metric-grid compact-metrics"><Metric label="取得見込み" value={`${plan.selected.reduce((sum, item) => sum + item.course.credits, 0)}単位`} detail="全科目に合格した場合" /><Metric label="抽選結果待ち" value={`${plan.lotteryCredits}単位`} detail="当選は保証されません" /><Metric label="学期上限" value={`${plan.capCountedCredits} / ${dataset.policies.termCap}`} detail="上限算入単位" /><Metric label="年間上限" value={`${profile.annualRegisteredCredits + plan.capCountedCredits} / ${annualCap}`} detail="登録済み分を含む" /></div>
-    <div className="plan-cards">{plan.selected.length ? plan.selected.map(({ course, offering, priority }) => <article className="plan-card" key={offering.id}><span className="course-code">{course.code}</span><h3>{course.name}</h3><p>{weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限 / クラス {offering.classCode}</p><small>{course.credits}単位・{labelRequirement(course)}{offering.lottery ? "・抽選" : ""}</small><em>{priority === "must" ? "希望を優先" : priority === "prefer" ? "希望科目" : "配当期の候補"}</em></article>) : <p>条件に合う開講科目がありません。希望・修得履歴・空けたい時限を見直してください。</p>}</div>
+    <div className="plan-cards">{plan.selected.length ? plan.selected.map(({ course, offering, priority }) => <article className="plan-card" key={offering.id}><span className="course-code">{displayCourseCode(course)}</span><h3>{course.name}</h3><p>{weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限 / クラス {offering.classCode}</p><small>{course.credits}単位・{labelRequirement(course)}{offering.lottery ? "・抽選" : ""}{offering.alternateWeeks ? "・隔週" : ""}</small><em>{priority === "must" ? "希望を優先" : priority === "prefer" ? "希望科目" : "配当期の候補"}</em></article>) : <p>条件に合う開講科目がありません。希望・修得履歴・空けたい時限を見直してください。</p>}</div>
     {plan.warnings.length > 0 && <div className="notice warning-box"><strong>注意</strong><ul>{plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
     {plan.rejected.length > 0 && <div className="notice"><strong>選べなかった希望科目</strong><ul>{plan.rejected.map(({ course, reasons }) => <li key={course.id}><b>{course.name}</b>: {reasons.join(" ")}</li>)}</ul></div>}
     <p className="disclaimer">この結果は計画支援です。最終的な履修可否は、最新の公式資料と大学の履修登録画面で確認してください。</p>

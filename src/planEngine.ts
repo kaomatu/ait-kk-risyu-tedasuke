@@ -3,6 +3,8 @@ import { slotKey } from "./types";
 
 const isCountedForProgression = (course: Course) => course.countForProgression !== false;
 const isCountedForGraduation = (course: Course) => course.countForGraduation !== false;
+// 2026年度KKの総合教育科目は、必修3単位と選択必修5単位で必修欄の8単位を構成する。
+const GENERAL_REQUIRED_ELECTIVE_CREDITS = 5;
 
 export function creditsCountedForCurrentTerm(course: Course, term: StudentProfile["term"]) {
   if (course.countsTowardCreditCap === false) return 0;
@@ -17,8 +19,12 @@ export function activeAnnualCap(dataset: Dataset, profile: StudentProfile) {
     : dataset.policies.normalAnnualCap;
 }
 
-function offeringForTerm(course: Course, term: StudentProfile["term"]) {
-  return course.offerings.filter((offering) => offering.term === term);
+function offeringForTerm(course: Course, profile: StudentProfile) {
+  return course.offerings.filter((offering) => (
+    offering.term === profile.term
+    && offering.eligibleForProgram !== false
+    && (!offering.rechallengeOnly || profile.rechallengeCourseIds.includes(course.id))
+  ));
 }
 
 function courseReasons(course: Course, profile: StudentProfile) {
@@ -26,9 +32,15 @@ function courseReasons(course: Course, profile: StudentProfile) {
   if (profile.completedCourseIds.includes(course.id) && !profile.rechallengeCourseIds.includes(course.id)) {
     reasons.push("すでに修得済みです。再チャレンジ履修として指定すると候補へ戻せます。");
   }
+  if (course.category === "specialized" && course.recommendedGrade > profile.currentGrade && !profile.rechallengeCourseIds.includes(course.id)) {
+    reasons.push(`標準履修学年（${course.recommendedGrade}年次）前の科目です。`);
+  }
+  if (course.recommendedTerm === "full_year" && profile.term === "fall") {
+    reasons.push("通年科目は前期から履修登録します。後期から新規登録はできません。");
+  }
   const missing = (course.hardPrerequisites ?? []).filter((id) => !profile.completedCourseIds.includes(id));
   if (missing.length > 0) reasons.push(`実線の前提科目が${missing.length}件、過去学期までに修得されていません。`);
-  if (offeringForTerm(course, profile.term).length === 0) reasons.push("今学期の開講クラスがありません。");
+  if (offeringForTerm(course, profile).length === 0) reasons.push("今学期の開講クラスがありません。");
   return reasons;
 }
 
@@ -58,7 +70,7 @@ export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanRes
       continue;
     }
 
-    const candidate = offeringForTerm(course, profile.term).find((offering) => {
+    const candidate = offeringForTerm(course, profile).find((offering) => {
       const slots = offering.periods.map((period) => slotKey(offering.weekday, period));
       return !slots.some((slot) => occupied.has(slot) || profile.hardBlockedSlots.includes(slot));
     });
@@ -130,8 +142,11 @@ export function calculateProgress(dataset: Dataset, profile: StudentProfile, pla
   });
   const specializedElective = creditSum(allGraduation, (course) => course.category === "specialized" && course.requirementType === "elective") + electiveFromGroups;
   const specializedRequiredWithGroup = specializedRequired + requiredFromGroups;
-  const generalRequired = creditSum(allGraduation, (course) => course.category === "general" && (course.requirementType === "required" || course.requirementType === "required_elective"));
-  const generalElective = creditSum(allGraduation, (course) => course.category === "general" && course.requirementType === "elective");
+  const generalCompulsory = creditSum(allGraduation, (course) => course.category === "general" && course.requirementType === "required");
+  const generalRequiredElective = creditSum(allGraduation, (course) => course.category === "general" && course.requirementType === "required_elective");
+  const generalRequired = generalCompulsory + Math.min(generalRequiredElective, GENERAL_REQUIRED_ELECTIVE_CREDITS);
+  const generalElective = creditSum(allGraduation, (course) => course.category === "general" && course.requirementType === "elective")
+    + Math.max(0, generalRequiredElective - GENERAL_REQUIRED_ELECTIVE_CREDITS);
   const english = creditSum(allGraduation, (course) => course.tags?.includes("english") ?? false);
 
   return {

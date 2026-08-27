@@ -12,11 +12,20 @@ export interface Offering {
   lottery: boolean;
   room?: string;
   instructor?: string;
+  /** false は資料には載るがKK学生が選べない開講（八草C専用・他学科受入用など）。 */
+  eligibleForProgram?: boolean;
+  /** 再チャレンジ履修として指定した学生だけが選べる再履修クラス。 */
+  rechallengeOnly?: boolean;
+  /** 隔週開講。時間割上は該当時限を使用するものとして扱う。 */
+  alternateWeeks?: boolean;
+  notes?: string;
 }
 
 export interface Course {
   id: string;
   code: string;
+  /** false のコードは資料内に公式コードがなく、内部識別子であることを示す。 */
+  officialCode?: boolean;
   name: string;
   credits: number;
   category: "specialized" | "general";

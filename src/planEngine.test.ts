@@ -88,4 +88,57 @@ describe("履修計画エンジン", () => {
     expect(progress.projectedProgression).toBe(3);
     expect(progress.graduationTotal).toBe(3);
   });
+
+  it("総合教育科目の選択必修は5単位まで必修、超過分は選択として集計する", () => {
+    const mandatory: Course = {
+      id: "general-mandatory", code: "GM", name: "総合必修", credits: 3, category: "general", requirementType: "required", recommendedGrade: 1, recommendedTerm: "spring", offerings: [],
+    };
+    const requiredElective: Course = {
+      id: "general-required-elective", code: "GRE", name: "総合選択必修", credits: 6, category: "general", requirementType: "required_elective", recommendedGrade: 1, recommendedTerm: "spring", offerings: [],
+    };
+    const progress = calculateProgress(
+      { ...mockCatalog, courses: [mandatory, requiredElective] },
+      profile({ completedCourseIds: [mandatory.id, requiredElective.id] }),
+      null,
+    );
+
+    expect(progress.generalRequired).toBe(8);
+    expect(progress.generalElective).toBe(1);
+    expect(progress.generalTotal).toBe(9);
+  });
+
+  it("対象外として記録したクラスはKK学生の候補に入れない", () => {
+    const course: Course = {
+      id: "excluded", code: "EX", name: "対象外", credits: 2, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [{ id: "excluded-1", term: "spring", classCode: "C", weekday: "mon", periods: [1], lottery: true, eligibleForProgram: false }],
+    };
+    const result = generatePlan({ ...mockCatalog, courses: [course] }, profile({ wanted: { excluded: "must" } }));
+
+    expect(result.selected).toHaveLength(0);
+    expect(result.rejected[0]?.reasons.join(" ")).toContain("開講クラスがありません");
+  });
+
+  it("再履修専用クラスは再チャレンジ指定時だけ候補に入れる", () => {
+    const course: Course = {
+      id: "retry", code: "RE", name: "再履修", credits: 2, category: "general", requirementType: "required", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [{ id: "retry-1", term: "spring", classCode: "再履修1", weekday: "mon", periods: [1], lottery: true, rechallengeOnly: true }],
+    };
+    const dataset = { ...mockCatalog, courses: [course] };
+    const withoutRetry = generatePlan(dataset, profile({ wanted: { retry: "must" } }));
+    const withRetry = generatePlan(dataset, profile({ completedCourseIds: ["retry"], rechallengeCourseIds: ["retry"], wanted: { retry: "must" } }));
+
+    expect(withoutRetry.selected).toHaveLength(0);
+    expect(withRetry.selected.map((item) => item.course.id)).toEqual(["retry"]);
+  });
+
+  it("通年科目は後期から新規に履修登録できない", () => {
+    const course: Course = {
+      id: "annual", code: "AN", name: "通年科目", credits: 4, category: "specialized", requirementType: "required", recommendedGrade: 3, recommendedTerm: "full_year",
+      offerings: [{ id: "annual-fall", term: "fall", classCode: "X1", weekday: "tue", periods: [1], lottery: false }],
+    };
+    const result = generatePlan({ ...mockCatalog, courses: [course] }, profile({ currentGrade: 3, term: "fall", wanted: { annual: "must" } }));
+
+    expect(result.selected).toHaveLength(0);
+    expect(result.rejected[0]?.reasons.join(" ")).toContain("後期から新規登録はできません");
+  });
 });
