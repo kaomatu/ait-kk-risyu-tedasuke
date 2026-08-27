@@ -70,7 +70,10 @@ function priorityOf(course: Course, profile: StudentProfile): PlanItem["priority
 export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanResult {
   const wantedIds = Object.keys(profile.wanted);
   const ranking = [...dataset.courses]
-    .filter((course) => wantedIds.includes(course.id) || (course.recommendedGrade === profile.currentGrade && course.recommendedTerm === profile.term))
+    // 履修案に入れるのは、利用者が選択した科目だけ。
+    // 未修得の必修は画面側で「必ず取りたい」として wanted に自動追加されるため、
+    // 配当学年・学期だけを根拠に選択必修／選択科目を勝手に追加しない。
+    .filter((course) => wantedIds.includes(course.id))
     .sort((a, b) => {
       const score = (course: Course) => priorityOf(course, profile) === "must" ? 3 : priorityOf(course, profile) === "prefer" ? 2 : course.requirementType === "required" ? 1 : 0;
       return score(b) - score(a) || a.code.localeCompare(b.code, "ja");

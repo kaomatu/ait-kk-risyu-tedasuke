@@ -27,6 +27,17 @@ describe("履修計画エンジン", () => {
     expect(activeAnnualCap(mockCatalog, profile({ gpa: 0, annualCapBonusLocked: true }))).toBe(52);
   });
 
+  it("取りたい科目に選択していない配当期の科目を、履修案へ勝手に追加しない", () => {
+    const result = generatePlan(mockCatalog, profile({
+      currentGrade: 1,
+      term: "fall",
+      completedCourseIds: ["demo.P101"],
+      wanted: {},
+    }));
+
+    expect(result.selected).toHaveLength(0);
+  });
+
   it("実線の前提科目を修得していない希望科目は登録候補から除外する", () => {
     const result = generatePlan(mockCatalog, profile({
       term: "fall",
