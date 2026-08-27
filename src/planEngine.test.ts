@@ -58,6 +58,36 @@ describe("履修計画エンジン", () => {
     expect(result.rejected[0]?.reasons.join(" ")).toContain("時間割の重複");
   });
 
+  it("複数クラスの抽選科目は、先に選んだ科目を別クラスへ振り替えて履修可能にする", () => {
+    const flexibleA: Course = {
+      id: "a", code: "A", name: "科目A", credits: 2, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [
+        { id: "a-mon", term: "spring", classCode: "A1", weekday: "mon", periods: [1], lottery: false },
+        { id: "a-wed", term: "spring", classCode: "A2", weekday: "wed", periods: [1], lottery: false },
+      ],
+    };
+    const flexibleB: Course = {
+      id: "b", code: "B", name: "科目B", credits: 2, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [
+        { id: "b-tue", term: "spring", classCode: "B1", weekday: "tue", periods: [1], lottery: false },
+        { id: "b-thu", term: "spring", classCode: "B2", weekday: "thu", periods: [1], lottery: false },
+      ],
+    };
+    const constitution: Course = {
+      id: "constitution", code: "G2048", name: "日本国憲法", credits: 2, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [
+        { id: "constitution-mon", term: "spring", classCode: "A1", weekday: "mon", periods: [1], lottery: true },
+        { id: "constitution-tue", term: "spring", classCode: "B1", weekday: "tue", periods: [1], lottery: true },
+      ],
+    };
+    const dataset: Dataset = { ...mockCatalog, courses: [flexibleA, flexibleB, constitution] };
+    const result = generatePlan(dataset, profile({ wanted: { a: "must", b: "must", constitution: "must" } }));
+
+    expect(result.rejected).toHaveLength(0);
+    expect(result.selected).toHaveLength(3);
+    expect(new Set(result.selected.flatMap(({ offering }) => offering.periods.map((period) => `${offering.weekday}-${period}`))).size).toBe(3);
+  });
+
   it("学期上限を超える希望科目を採用しない", () => {
     const largeCourses: Course[] = [
       {

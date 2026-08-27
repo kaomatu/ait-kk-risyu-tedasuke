@@ -67,6 +67,50 @@ function priorityOf(course: Course, profile: StudentProfile): PlanItem["priority
   return profile.wanted[course.id] ?? "suggested";
 }
 
+type Offering = Course["offerings"][number];
+
+function offeringSlots(offering: Offering) {
+  return offering.periods.map((period) => slotKey(offering.weekday, period));
+}
+
+/**
+ * 同一科目の複数クラスを含め、選択済み科目全体で重複しないクラスの組合せを探す。
+ * 先に処理した科目の最初のクラスに固定せず、後から抽選科目を追加しても、
+ * 必要なら既存科目を別クラスへ振り替える。
+ */
+function findCompatibleSchedule(courses: Course[], profile: StudentProfile): Map<string, Offering> | null {
+  const candidateCourses = courses
+    .map((course) => ({
+      course,
+      offerings: offeringForTerm(course, profile)
+        .filter((offering) => !offeringSlots(offering).some((slot) => profile.hardBlockedSlots.includes(slot))),
+    }))
+    // 選択肢の少ない科目を先に置くと、必要な探索回数を大きく抑えられる。
+    .sort((a, b) => a.offerings.length - b.offerings.length || a.course.code.localeCompare(b.course.code, "ja"));
+
+  if (candidateCourses.some(({ offerings }) => offerings.length === 0)) return null;
+
+  const occupied = new Set<string>();
+  const assignment = new Map<string, Offering>();
+
+  function place(index: number): boolean {
+    if (index === candidateCourses.length) return true;
+    const { course, offerings } = candidateCourses[index]!;
+    for (const offering of offerings) {
+      const slots = offeringSlots(offering);
+      if (slots.some((slot) => occupied.has(slot))) continue;
+      slots.forEach((slot) => occupied.add(slot));
+      assignment.set(course.id, offering);
+      if (place(index + 1)) return true;
+      assignment.delete(course.id);
+      slots.forEach((slot) => occupied.delete(slot));
+    }
+    return false;
+  }
+
+  return place(0) ? assignment : null;
+}
+
 export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanResult {
   const wantedIds = Object.keys(profile.wanted);
   const ranking = [...dataset.courses]
@@ -81,7 +125,6 @@ export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanRes
 
   const selected: PlanItem[] = [];
   const rejected: PlanResult["rejected"] = [];
-  const occupied = new Set<string>();
   let capCredits = 0;
   const annualCap = activeAnnualCap(dataset, profile);
 
@@ -92,11 +135,9 @@ export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanRes
       continue;
     }
 
-    const candidate = offeringForTerm(course, profile).find((offering) => {
-      const slots = offering.periods.map((period) => slotKey(offering.weekday, period));
-      return !slots.some((slot) => occupied.has(slot) || profile.hardBlockedSlots.includes(slot));
-    });
-    if (!candidate) {
+    const coursesToSchedule = [...selected.map((item) => item.course), course];
+    const assignment = findCompatibleSchedule(coursesToSchedule, profile);
+    if (!assignment) {
       if (wantedIds.includes(course.id)) rejected.push({ course, reasons: ["時間割の重複、または空けたい時限（固定）と重なります。"] });
       continue;
     }
@@ -110,9 +151,13 @@ export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanRes
       continue;
     }
 
-    selected.push({ course, offering: candidate, priority: priorityOf(course, profile) });
+    // 組合せ探索で選ばれたクラスを、すでに採用済みの科目にも反映する。
+    selected.splice(0, selected.length, ...coursesToSchedule.map((scheduledCourse) => ({
+      course: scheduledCourse,
+      offering: assignment.get(scheduledCourse.id)!,
+      priority: priorityOf(scheduledCourse, profile),
+    })));
     capCredits += currentTermCredits;
-    candidate.periods.forEach((period) => occupied.add(slotKey(candidate.weekday, period)));
   }
 
   const warnings: string[] = [];
