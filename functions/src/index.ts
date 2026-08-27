@@ -31,6 +31,11 @@ interface StoredProfile {
   annualRegisteredCredits: number;
 }
 
+interface ProfileSnapshotSummary {
+  snapshotNo: number;
+  savedAt: string;
+}
+
 function assertAppAccess(request: CallableRequest<unknown>) {
   if (request.auth?.token.appAccess !== true) {
     throw new HttpsError("unauthenticated", "この操作にはアプリへのアクセス認証が必要です。");
@@ -139,24 +144,112 @@ function validProfile(value: unknown): value is StoredProfile {
     && typeof profile.annualRegisteredCredits === "number";
 }
 
+function assertValidProfile(value: unknown): asserts value is StoredProfile {
+  if (!validProfile(value)) {
+    throw new HttpsError("invalid-argument", "保存するプロフィールの形式が正しくありません。");
+  }
+  if (JSON.stringify(value).length > 40_000) {
+    throw new HttpsError("invalid-argument", "プロフィールのサイズが上限を超えています。");
+  }
+}
+
+function planningProfileRef(uid: string) {
+  return getFirestore().collection("users").doc(uid).collection("planning").doc("profile");
+}
+
+function snapshotDocumentId(snapshotNo: number) {
+  return `no-${String(snapshotNo).padStart(6, "0")}`;
+}
+
+function requestedSnapshotNo(value: unknown) {
+  if (!Number.isInteger(value) || typeof value !== "number" || value < 1 || value > 9_999_999) {
+    throw new HttpsError("invalid-argument", "読み込む保存番号が正しくありません。");
+  }
+  return value;
+}
+
 export const loadStudentProfile = onCall(async (request) => {
   assertAppAccess(request);
-  const snapshot = await getFirestore().collection("users").doc(request.auth!.uid).collection("planning").doc("profile").get();
+  const snapshot = await planningProfileRef(request.auth!.uid).get();
   return { profile: snapshot.exists ? snapshot.data()?.profile ?? null : null };
 });
 
 export const saveStudentProfile = onCall(async (request) => {
   assertAppAccess(request);
   const profile = (request.data as Record<string, unknown> | undefined)?.profile;
-  if (!validProfile(profile)) {
-    throw new HttpsError("invalid-argument", "保存するプロフィールの形式が正しくありません。");
-  }
-  if (JSON.stringify(profile).length > 40_000) {
-    throw new HttpsError("invalid-argument", "プロフィールのサイズが上限を超えています。");
-  }
-  await getFirestore().collection("users").doc(request.auth!.uid).collection("planning").doc("profile").set({
+  assertValidProfile(profile);
+  await planningProfileRef(request.auth!.uid).set({
     profile,
     updatedAt: new Date().toISOString(),
   });
   return { saved: true };
+});
+
+export const saveProfileSnapshot = onCall(async (request) => {
+  assertAppAccess(request);
+  const profile = (request.data as Record<string, unknown> | undefined)?.profile;
+  assertValidProfile(profile);
+
+  const profileRef = planningProfileRef(request.auth!.uid);
+  const snapshots = profileRef.collection("snapshots");
+  const counterRef = snapshots.doc("_counter");
+  const snapshot = await getFirestore().runTransaction(async (transaction) => {
+    const counter = await transaction.get(counterRef);
+    const lastSnapshotNo = counter.exists && typeof counter.data()?.lastSnapshotNo === "number"
+      ? counter.data()!.lastSnapshotNo
+      : 0;
+    const snapshotNo = lastSnapshotNo + 1;
+    const savedAt = new Date().toISOString();
+    transaction.set(snapshots.doc(snapshotDocumentId(snapshotNo)), {
+      kind: "profile_snapshot",
+      snapshotNo,
+      savedAt,
+      profile,
+    });
+    transaction.set(counterRef, {
+      kind: "profile_snapshot_counter",
+      lastSnapshotNo: snapshotNo,
+      updatedAt: savedAt,
+    }, { merge: true });
+    return { snapshotNo, savedAt } satisfies ProfileSnapshotSummary;
+  });
+  return { snapshot };
+});
+
+export const listProfileSnapshots = onCall(async (request) => {
+  assertAppAccess(request);
+  const snapshots = await planningProfileRef(request.auth!.uid)
+    .collection("snapshots")
+    .where("kind", "==", "profile_snapshot")
+    .get();
+  const items = snapshots.docs
+    .map((document) => document.data())
+    .filter((item): item is ProfileSnapshotSummary => (
+      typeof item.snapshotNo === "number"
+      && Number.isInteger(item.snapshotNo)
+      && typeof item.savedAt === "string"
+    ))
+    .map(({ snapshotNo, savedAt }) => ({ snapshotNo, savedAt }))
+    .sort((a, b) => b.snapshotNo - a.snapshotNo);
+  return { snapshots: items };
+});
+
+export const loadProfileSnapshot = onCall(async (request) => {
+  assertAppAccess(request);
+  const snapshotNo = requestedSnapshotNo((request.data as Record<string, unknown> | undefined)?.snapshotNo);
+  const snapshot = await planningProfileRef(request.auth!.uid).collection("snapshots").doc(snapshotDocumentId(snapshotNo)).get();
+  if (!snapshot.exists || snapshot.data()?.kind !== "profile_snapshot") {
+    throw new HttpsError("not-found", `No. ${snapshotNo} の保存データが見つかりません。`);
+  }
+  const data = snapshot.data()!;
+  if (!validProfile(data.profile) || typeof data.savedAt !== "string") {
+    throw new HttpsError("data-loss", "保存データの形式が正しくありません。");
+  }
+  return {
+    snapshot: {
+      snapshotNo,
+      savedAt: data.savedAt,
+      profile: data.profile,
+    },
+  };
 });

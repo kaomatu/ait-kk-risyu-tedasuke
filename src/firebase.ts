@@ -1,7 +1,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, signInWithCustomToken, signOut, type Auth, type User } from "firebase/auth";
 import { getFunctions, httpsCallable, type Functions } from "firebase/functions";
-import type { Dataset } from "./types";
+import type { Dataset, ProfileSnapshot, ProfileSnapshotSummary, StudentProfile } from "./types";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -99,4 +99,62 @@ export async function saveStudentProfile(profile: unknown) {
   if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
   const saveProfile = httpsCallable<{ profile: unknown }, { saved: boolean }>(functions, "saveStudentProfile");
   await saveProfile({ profile });
+}
+
+const localSnapshotKey = "ait-kk-local-preview-profile-snapshots";
+
+function readLocalSnapshots(): ProfileSnapshot[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(localSnapshotKey) ?? "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is ProfileSnapshot => (
+      Boolean(item)
+      && typeof item === "object"
+      && Number.isInteger((item as ProfileSnapshot).snapshotNo)
+      && typeof (item as ProfileSnapshot).savedAt === "string"
+      && Boolean((item as ProfileSnapshot).profile)
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalSnapshots(snapshots: ProfileSnapshot[]) {
+  localStorage.setItem(localSnapshotKey, JSON.stringify(snapshots));
+}
+
+export async function listProfileSnapshots(): Promise<ProfileSnapshotSummary[]> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") {
+    return readLocalSnapshots()
+      .map(({ snapshotNo, savedAt }) => ({ snapshotNo, savedAt }))
+      .sort((a, b) => b.snapshotNo - a.snapshotNo);
+  }
+  if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const listSnapshots = httpsCallable<undefined, { snapshots: ProfileSnapshotSummary[] }>(functions, "listProfileSnapshots");
+  return (await listSnapshots()).data.snapshots;
+}
+
+export async function saveProfileSnapshot(profile: StudentProfile): Promise<ProfileSnapshotSummary> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") {
+    const snapshots = readLocalSnapshots();
+    const snapshotNo = Math.max(0, ...snapshots.map((snapshot) => snapshot.snapshotNo)) + 1;
+    const savedAt = new Date().toISOString();
+    snapshots.push({ snapshotNo, savedAt, profile });
+    writeLocalSnapshots(snapshots);
+    return { snapshotNo, savedAt };
+  }
+  if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const saveSnapshot = httpsCallable<{ profile: StudentProfile }, { snapshot: ProfileSnapshotSummary }>(functions, "saveProfileSnapshot");
+  return (await saveSnapshot({ profile })).data.snapshot;
+}
+
+export async function loadProfileSnapshot(snapshotNo: number): Promise<ProfileSnapshot> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") {
+    const snapshot = readLocalSnapshots().find((item) => item.snapshotNo === snapshotNo);
+    if (!snapshot) throw new Error(`No. ${snapshotNo} の保存データが見つかりません。`);
+    return snapshot;
+  }
+  if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const loadSnapshot = httpsCallable<{ snapshotNo: number }, { snapshot: ProfileSnapshot }>(functions, "loadProfileSnapshot");
+  return (await loadSnapshot({ snapshotNo })).data.snapshot;
 }

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { createIngestionJob, createInitialKkDataset, firebaseEnabled, loadCatalog, loadStudentProfile, loginWithPassphrase, logout, saveStudentProfile, subscribeToAuth } from "./firebase";
+import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadProfileSnapshot, loginWithPassphrase, logout, saveProfileSnapshot, subscribeToAuth } from "./firebase";
 import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan } from "./planEngine";
-import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type PlanResult, type StudentProfile, type Weekday } from "./types";
+import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
 import "./styles.css";
 
 type Tab = "overview" | "ingestion" | "planner" | "rules";
@@ -58,6 +58,8 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [profile, setProfile] = useState<StudentProfile>(defaultProfile);
   const [plan, setPlan] = useState<PlanResult | null>(null);
+  const [snapshots, setSnapshots] = useState<ProfileSnapshotSummary[]>([]);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
 
   useEffect(() => subscribeToAuth((user) => {
     setHasAccess(Boolean(user) || (localPreview && sessionStorage.getItem("ait-kk-local-preview-auth") === "1"));
@@ -67,6 +69,8 @@ export default function App() {
   useEffect(() => {
     if (!hasAccess) {
       setDataset(null);
+      setSnapshots([]);
+      setProfile(defaultProfile());
       return;
     }
     setLoadingDataset(true);
@@ -74,20 +78,9 @@ export default function App() {
       .then((next) => setDataset(next))
       .catch((error: unknown) => setMessage(error instanceof Error ? error.message : "カタログの取得に失敗しました。"))
       .finally(() => setLoadingDataset(false));
-    const localStored = localPreview ? localStorage.getItem("ait-kk-local-preview-profile") : null;
-    if (localStored) {
-      try {
-        const stored = profileFromUnknown(JSON.parse(localStored));
-        if (stored) setProfile(stored);
-      } catch { /* ローカル確認用の壊れた保存値は無視する */ }
-    } else if (!localPreview) {
-      loadStudentProfile()
-        .then((stored) => {
-          const parsed = profileFromUnknown(stored);
-          if (parsed) setProfile(parsed);
-        })
-        .catch(() => setMessage("保存済みの履修計画を読み込めませんでした。新しい計画として続けられます。"));
-    }
+    listProfileSnapshots()
+      .then(setSnapshots)
+      .catch(() => setMessage("保存済みの履修計画一覧を読み込めませんでした。新しい計画として続けられます。"));
   }, [hasAccess]);
 
   const planProgress = useMemo(() => dataset ? calculateProgress(dataset, profile, plan) : null, [dataset, profile, plan]);
@@ -135,12 +128,35 @@ export default function App() {
     }
   }
 
-  async function persistProfile() {
+  async function saveNumberedProfile() {
+    setSnapshotBusy(true);
     try {
-      await saveStudentProfile(profile);
-      setMessage("修得履歴・希望科目・空き希望を保存しました。");
+      const snapshot = await saveProfileSnapshot(profile);
+      setSnapshots((current) => [snapshot, ...current].sort((a, b) => b.snapshotNo - a.snapshotNo));
+      setMessage(`現在の履修計画を No. ${snapshot.snapshotNo} として保存しました。`);
+      return snapshot;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "履修計画を保存できませんでした。");
+      throw error;
+    } finally {
+      setSnapshotBusy(false);
+    }
+  }
+
+  async function loadNumberedProfile(snapshotNo: number) {
+    setSnapshotBusy(true);
+    try {
+      const snapshot = await loadProfileSnapshot(snapshotNo);
+      const savedProfile = profileFromUnknown(snapshot.profile);
+      if (!savedProfile) throw new Error(`No. ${snapshotNo} の保存データを読み込めませんでした。`);
+      setProfile(savedProfile);
+      setPlan(null);
+      setMessage(`No. ${snapshotNo} の履修計画を読み込みました。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "履修計画を読み込めませんでした。");
+      throw error;
+    } finally {
+      setSnapshotBusy(false);
     }
   }
 
@@ -172,7 +188,7 @@ export default function App() {
         {!loadingDataset && !dataset && !localPreview && <DatasetSetup onSeed={seedDataset} />}
         {dataset && tab === "overview" && <Overview dataset={dataset} profile={profile} progress={planProgress} onOpenPlanner={() => setTab("planner")} />}
         {dataset && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} />}
-        {dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} onSave={() => void persistProfile()} />}
+        {dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} snapshots={snapshots} snapshotBusy={snapshotBusy} onSaveSnapshot={saveNumberedProfile} onLoadSnapshot={loadNumberedProfile} />}
         {dataset && tab === "rules" && <Rules dataset={dataset} />}
       </section>
     </main>
@@ -328,7 +344,7 @@ function IngestionTool({ localPreview, onMessage }: { localPreview: boolean; onM
   </>;
 }
 
-function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, onSave }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult | null; progress: ReturnType<typeof calculateProgress> | null; patchProfile: (patch: Partial<StudentProfile>) => void; onGenerate: () => void; onSave: () => void }) {
+function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, snapshots, snapshotBusy, onSaveSnapshot, onLoadSnapshot }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult | null; progress: ReturnType<typeof calculateProgress> | null; patchProfile: (patch: Partial<StudentProfile>) => void; onGenerate: () => void; snapshots: ProfileSnapshotSummary[]; snapshotBusy: boolean; onSaveSnapshot: () => Promise<ProfileSnapshotSummary>; onLoadSnapshot: (snapshotNo: number) => Promise<void> }) {
   const catalogByGrade = [1, 2, 3, 4].map((grade) => ({ grade, courses: dataset.courses.filter((course) => course.recommendedGrade === grade) }));
   const termCourses = dataset.courses.filter((course) => course.offerings.some((offering) => (
     canUseOffering(course, offering, profile)
@@ -377,7 +393,7 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, o
   }
 
   return <>
-    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / PLANNER</p><h1>履修の希望と、要件をひとつに。</h1><p>現在学期で開講する未修得の必修科目は「必ず取りたい」に自動設定します。カードをクリックすると希望は手動で変更できます。</p></div><div className="planner-actions"><button className="secondary-button" onClick={onSave}>入力内容を保存</button><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
+    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / PLANNER</p><h1>履修の希望と、要件をひとつに。</h1><p>現在学期で開講する未修得の必修科目は「必ず取りたい」に自動設定します。カードをクリックすると希望は手動で変更できます。</p></div><div className="planner-actions"><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
     <section className="profile-strip section-card">
       <label>現在の学年<select value={profile.currentGrade} onChange={(event) => patchProfile({ currentGrade: Number(event.target.value) })}>{[1, 2, 3, 4].map((grade) => <option value={grade} key={grade}>{grade}年次</option>)}</select></label>
       <label>現在の学期<select value={profile.term} onChange={(event) => patchProfile({ term: event.target.value as StudentProfile["term"] })}><option value="spring">前期</option><option value="fall">後期</option></select></label>
@@ -397,10 +413,32 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, o
         <article className="section-card"><p className="eyebrow">FREE TIME</p><h2>空けたい時限</h2><p className="compact">クリック: 固定で空ける → できれば空ける → 解除</p><div className="slot-grid"><span />{weekdays.map((day) => <span className="slot-header" key={day}>{weekdayLabels[day]}</span>)}{periods.map((period) => <Fragment key={`period-${period}`}><span className="period-label">{period}</span>{weekdays.map((day) => { const key = slotKey(day, period); const mode = profile.hardBlockedSlots.includes(key) ? "hard" : profile.softBlockedSlots.includes(key) ? "soft" : ""; return <button key={key} className={`slot ${mode}`} onClick={() => cycleSlot(day, period)} aria-label={`${weekdayLabels[day]}曜日${period}限`}>{mode === "hard" ? "空" : mode === "soft" ? "△" : ""}</button>; })}</Fragment>)}</div><div className="slot-caption"><span>空 = 固定</span><span>△ = できれば</span></div></article>
         {progress && <article className="section-card"><p className="eyebrow">REQUIREMENTS</p><h2>要件の進捗</h2><ProgressLine label="進級用合計" value={progress.projectedProgression} target={dataset.policies.progression.find((rule) => rule.toGrade === Math.min(4, profile.currentGrade + 1))?.minCredits ?? 105} /><ProgressLine label="専門合計" value={progress.specializedTotal} target={dataset.policies.graduation.specializedTotal} /><ProgressLine label="総合合計" value={progress.generalTotal} target={dataset.policies.graduation.generalTotal} /><ProgressLine label="英語系" value={progress.english} target={dataset.policies.graduation.english} /><ProgressLine label="卒業総計" value={progress.graduationTotal} target={dataset.policies.graduation.total} /></article>}
         {lotteryCourses.length > 0 && <article className="section-card"><p className="eyebrow">LOTTERY STATUS</p><h2>抽選の状況</h2><p className="compact">結果を手動で反映します。落選後は同じ科目を再申請でき、当選後は別クラスへ申請できません。</p><div className="lottery-list">{lotteryCourses.map((course) => <label key={course.id}>{course.name}<select value={profile.lotteryStates[course.id] ?? "none"} onChange={(event) => patchProfile({ lotteryStates: { ...profile.lotteryStates, [course.id]: event.target.value as "none" | "applied" | "lost" | "won" } })}><option value="none">未申請</option><option value="applied">申請中</option><option value="lost">落選（再申請可能）</option><option value="won">当選済み</option></select></label>)}</div></article>}
+        <SnapshotControls snapshots={snapshots} busy={snapshotBusy} onSave={onSaveSnapshot} onLoad={onLoadSnapshot} />
       </aside>
     </section>
     {plan && <PlanResultView dataset={dataset} profile={profile} plan={plan} />}
   </>;
+}
+
+function SnapshotControls({ snapshots, busy, onSave, onLoad }: { snapshots: ProfileSnapshotSummary[]; busy: boolean; onSave: () => Promise<ProfileSnapshotSummary>; onLoad: (snapshotNo: number) => Promise<void> }) {
+  const [selectedSnapshotNo, setSelectedSnapshotNo] = useState("");
+
+  async function save() {
+    try {
+      const snapshot = await onSave();
+      setSelectedSnapshotNo(String(snapshot.snapshotNo));
+    } catch { /* 親コンポーネントがエラーをトースト表示する */ }
+  }
+
+  async function load() {
+    const snapshotNo = Number(selectedSnapshotNo);
+    if (!Number.isInteger(snapshotNo) || snapshotNo < 1) return;
+    try {
+      await onLoad(snapshotNo);
+    } catch { /* 親コンポーネントがエラーをトースト表示する */ }
+  }
+
+  return <article className="section-card snapshot-controls"><p className="eyebrow">SAVED PLANS</p><h2>保存・読み込み</h2><p className="compact">保存するたびに No. を自動で増やします。保存データの削除は行いません。</p><button className="secondary-button full" disabled={busy} onClick={() => void save()}>{busy ? "保存中…" : "保存する"}</button><label>読み込むデータ<select value={selectedSnapshotNo} disabled={busy || snapshots.length === 0} onChange={(event) => setSelectedSnapshotNo(event.target.value)}><option value="">No. を選択</option>{snapshots.map((snapshot) => <option value={snapshot.snapshotNo} key={snapshot.snapshotNo}>No. {snapshot.snapshotNo}（{new Date(snapshot.savedAt).toLocaleString("ja-JP")}）</option>)}</select></label><button className="primary-button full" disabled={busy || !selectedSnapshotNo} onClick={() => void load()}>{busy ? "読み込み中…" : "読み込む"}</button>{snapshots.length === 0 && <small>まだ保存データはありません。最初の保存は No. 1 です。</small>}</article>;
 }
 
 function PlanResultView({ dataset, profile, plan }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult }) {

@@ -91,6 +91,17 @@ export interface StudentProfile {
   annualRegisteredCredits: number;
 }
 
+/** 番号付きで保存する履修計画の一覧用メタデータ。 */
+export interface ProfileSnapshotSummary {
+  snapshotNo: number;
+  savedAt: string;
+}
+
+/** 読み込み時に使う、入力内容を含む番号付き履修計画。 */
+export interface ProfileSnapshot extends ProfileSnapshotSummary {
+  profile: StudentProfile;
+}
+
 export interface PlanItem {
   course: Course;
   offering: Offering;
