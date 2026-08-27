@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { createIngestionJob, createInitialKkDataset, firebaseEnabled, loadCatalog, loadStudentProfile, loginWithPassphrase, logout, saveStudentProfile, subscribeToAuth } from "./firebase";
-import { activeAnnualCap, calculateProgress, generatePlan } from "./planEngine";
+import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan } from "./planEngine";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type PlanResult, type StudentProfile, type Weekday } from "./types";
 import "./styles.css";
 
@@ -16,6 +16,7 @@ function defaultProfile(): StudentProfile {
     annualCapBonusLocked: false,
     completedCourseIds: [],
     wanted: {},
+    autoRequiredCourseIds: [],
     rechallengeCourseIds: [],
     lotteryStates: {},
     hardBlockedSlots: [],
@@ -28,7 +29,7 @@ function profileFromUnknown(value: unknown): StudentProfile | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<StudentProfile>;
   if (!Number.isInteger(candidate.currentGrade) || (candidate.term !== "spring" && candidate.term !== "fall")) return null;
-  if (!Array.isArray(candidate.completedCourseIds) || !candidate.wanted || !Array.isArray(candidate.rechallengeCourseIds) || !candidate.lotteryStates || !Array.isArray(candidate.hardBlockedSlots) || !Array.isArray(candidate.softBlockedSlots)) return null;
+  if (!Array.isArray(candidate.completedCourseIds) || !candidate.wanted || (candidate.autoRequiredCourseIds !== undefined && !Array.isArray(candidate.autoRequiredCourseIds)) || !Array.isArray(candidate.rechallengeCourseIds) || !candidate.lotteryStates || !Array.isArray(candidate.hardBlockedSlots) || !Array.isArray(candidate.softBlockedSlots)) return null;
   return { ...defaultProfile(), ...candidate };
 }
 
@@ -90,6 +91,31 @@ export default function App() {
   }, [hasAccess]);
 
   const planProgress = useMemo(() => dataset ? calculateProgress(dataset, profile, plan) : null, [dataset, profile, plan]);
+
+  useEffect(() => {
+    if (!dataset) return;
+    const requiredIds = autoRequiredCourseIds(dataset, profile);
+    setProfile((current) => {
+      const desired = new Set(requiredIds);
+      const wanted = { ...current.wanted };
+      const previousAutoIds = current.autoRequiredCourseIds;
+      for (const id of previousAutoIds) {
+        if (!desired.has(id) && wanted[id] === "must") delete wanted[id];
+      }
+      const newAutoIds = requiredIds.filter((id) => !previousAutoIds.includes(id));
+      for (const id of newAutoIds) wanted[id] = "must";
+      const nextAutoIds = [
+        ...previousAutoIds.filter((id) => desired.has(id) && wanted[id] === "must"),
+        ...newAutoIds,
+      ];
+      const unchanged = nextAutoIds.length === previousAutoIds.length
+        && nextAutoIds.every((id, index) => id === previousAutoIds[index])
+        && Object.keys(wanted).length === Object.keys(current.wanted).length
+        && Object.entries(wanted).every(([id, priority]) => current.wanted[id] === priority);
+      return unchanged ? current : { ...current, wanted, autoRequiredCourseIds: nextAutoIds };
+    });
+    setPlan(null);
+  }, [dataset, profile.currentGrade, profile.term, profile.completedCourseIds]);
 
   function patchProfile(patch: Partial<StudentProfile>) {
     setProfile((current) => ({ ...current, ...patch }));
@@ -305,16 +331,16 @@ function IngestionTool({ localPreview, onMessage }: { localPreview: boolean; onM
 function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, onSave }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult | null; progress: ReturnType<typeof calculateProgress> | null; patchProfile: (patch: Partial<StudentProfile>) => void; onGenerate: () => void; onSave: () => void }) {
   const catalogByGrade = [1, 2, 3, 4].map((grade) => ({ grade, courses: dataset.courses.filter((course) => course.recommendedGrade === grade) }));
   const termCourses = dataset.courses.filter((course) => course.offerings.some((offering) => (
-    offering.term === profile.term
-    && offering.eligibleForProgram !== false
-    && (!offering.rechallengeOnly || profile.rechallengeCourseIds.includes(course.id))
+    canUseOffering(course, offering, profile)
   )));
   const lotteryCourses = termCourses.filter((course) => course.offerings.some((offering) => (
     offering.lottery
-    && offering.eligibleForProgram !== false
-    && (!offering.rechallengeOnly || profile.rechallengeCourseIds.includes(course.id))
+    && canUseOffering(course, offering, profile)
   )));
   const annualCap = activeAnnualCap(dataset, profile);
+  const automaticRequiredCourses = profile.autoRequiredCourseIds
+    .map((id) => dataset.courses.find((course) => course.id === id))
+    .filter((course): course is Course => Boolean(course));
 
   function toggleWanted(course: Course) {
     const current = profile.wanted[course.id];
@@ -322,7 +348,7 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, o
     if (!current) wanted[course.id] = "prefer";
     else if (current === "prefer") wanted[course.id] = "must";
     else delete wanted[course.id];
-    patchProfile({ wanted });
+    patchProfile({ wanted, autoRequiredCourseIds: profile.autoRequiredCourseIds.filter((id) => id !== course.id) });
   }
 
   function toggleCompleted(courseId: string) {
@@ -351,7 +377,7 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, o
   }
 
   return <>
-    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / PLANNER</p><h1>履修の希望と、要件をひとつに。</h1><p>希望の強さはカードをクリックして「未選択 → できれば → 必ず」の順に切り替えます。</p></div><div className="planner-actions"><button className="secondary-button" onClick={onSave}>入力内容を保存</button><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
+    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / PLANNER</p><h1>履修の希望と、要件をひとつに。</h1><p>現在学期で開講する未修得の必修科目は「必ず取りたい」に自動設定します。カードをクリックすると希望は手動で変更できます。</p></div><div className="planner-actions"><button className="secondary-button" onClick={onSave}>入力内容を保存</button><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
     <section className="profile-strip section-card">
       <label>現在の学年<select value={profile.currentGrade} onChange={(event) => patchProfile({ currentGrade: Number(event.target.value) })}>{[1, 2, 3, 4].map((grade) => <option value={grade} key={grade}>{grade}年次</option>)}</select></label>
       <label>現在の学期<select value={profile.term} onChange={(event) => patchProfile({ term: event.target.value as StudentProfile["term"] })}><option value="spring">前期</option><option value="fall">後期</option></select></label>
@@ -359,10 +385,11 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, o
       <label>今年度の登録済み単位<input type="number" min="0" max={annualCap} value={profile.annualRegisteredCredits} onChange={(event) => patchProfile({ annualRegisteredCredits: Number(event.target.value) })} /></label>
       <label className="check-label"><input type="checkbox" checked={profile.annualCapBonusLocked} onChange={(event) => patchProfile({ annualCapBonusLocked: event.target.checked })} /> 進級時の判定で年間52単位の優遇を取得済み</label>
     </section>
+    {automaticRequiredCourses.length > 0 && <section className="notice auto-required-notice" role="status"><strong>必修を自動選択しました</strong><p>{automaticRequiredCourses.map((course) => course.name).join("、")}</p></section>}
     <section className="planner-layout">
       <div className="planner-main">
-        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">CURRICULUM TREE</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-completed" />修得済 <i className="legend-wanted" />希望 <i className="legend-blocked" />前提未達</span></div>
-          <div className="tree-grid">{catalogByGrade.map(({ grade, courses }) => <section className="tree-column" key={grade}><h3>{grade}年次</h3>{courses.map((course) => <button key={course.id} className={`course-card ${statusClass(course, profile)} ${profile.wanted[course.id] ?? ""}`} onClick={() => toggleWanted(course)}><span className="course-code">{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位 / {labelRequirement(course)} / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}</small>{profile.wanted[course.id] && <em>{profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}</button>)}</section>)}</div>
+        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">CURRICULUM TREE</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-required" />必修 <i className="legend-completed" />修得済 <i className="legend-wanted" />希望 <i className="legend-blocked" />前提未達</span></div>
+          <div className="tree-grid">{catalogByGrade.map(({ grade, courses }) => <section className="tree-column" key={grade}><h3>{grade}年次</h3>{courses.map((course) => <button key={course.id} className={`course-card ${statusClass(course, profile)} ${course.requirementType} ${profile.wanted[course.id] ?? ""}`} onClick={() => toggleWanted(course)}><span className="course-code">{displayCourseCode(course)}</span><div className="course-title"><strong>{course.name}</strong><span className={`requirement-badge ${course.requirementType}`}>{labelRequirement(course)}</span></div><small>{course.credits}単位 / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}</small>{profile.wanted[course.id] && <em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・自動選択" : profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}</button>)}</section>)}</div>
         </article>
         <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COMPLETED HISTORY</p><h2>修得済みの科目</h2></div><span className="pill">選択式入力</span></div><p>カタログから科目を選択して修得履歴を入力します。自由入力は使いません。</p><div className="history-list">{dataset.courses.map((course) => <label key={course.id} className="history-item"><input type="checkbox" checked={profile.completedCourseIds.includes(course.id)} onChange={() => toggleCompleted(course.id)} /> <span>{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位</small></label>)}</div>{profile.completedCourseIds.length > 0 && <div className="rechallenge-list"><p><b>再チャレンジ履修</b>（修得済みでも今期にもう一度履修する科目）</p>{profile.completedCourseIds.map((id) => { const course = dataset.courses.find((item) => item.id === id); return course ? <label key={id} className="mini-check"><input type="checkbox" checked={profile.rechallengeCourseIds.includes(id)} onChange={() => toggleRechallenge(id)} /> {course.name}</label> : null; })}</div>}</article>
       </div>

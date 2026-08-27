@@ -19,12 +19,31 @@ export function activeAnnualCap(dataset: Dataset, profile: StudentProfile) {
     : dataset.policies.normalAnnualCap;
 }
 
+export function canUseOffering(course: Course, offering: Course["offerings"][number], profile: StudentProfile) {
+  if (offering.term !== profile.term || offering.eligibleForProgram === false) return false;
+  if (!offering.rechallengeOnly) return true;
+  // 不合格・未履修の再履修は修得済みではないため、そのまま登録候補にする。
+  // 修得済みの再チャレンジ履修だけは、本人が明示した場合に限定する。
+  return !profile.completedCourseIds.includes(course.id) || profile.rechallengeCourseIds.includes(course.id);
+}
+
 function offeringForTerm(course: Course, profile: StudentProfile) {
-  return course.offerings.filter((offering) => (
-    offering.term === profile.term
-    && offering.eligibleForProgram !== false
-    && (!offering.rechallengeOnly || profile.rechallengeCourseIds.includes(course.id))
-  ));
+  return course.offerings.filter((offering) => canUseOffering(course, offering, profile));
+}
+
+/** 現在学期に開講する未修得の必修科目。画面で「必ず取りたい」に自動設定する。 */
+export function autoRequiredCourseIds(dataset: Dataset, profile: StudentProfile) {
+  return dataset.courses
+    .filter((course) => course.requirementType === "required")
+    .filter((course) => !profile.completedCourseIds.includes(course.id))
+    .filter((course) => course.recommendedTerm !== "full_year" || profile.term === "spring")
+    .filter((course) => {
+      const availableOfferings = offeringForTerm(course, profile);
+      // 正規開講は配当学年に限る。未修得者向けの再履修クラスだけは上級年次でも対象にする。
+      return availableOfferings.some((offering) => offering.rechallengeOnly) || course.recommendedGrade === profile.currentGrade;
+    })
+    .filter((course) => offeringForTerm(course, profile).length > 0)
+    .map((course) => course.id);
 }
 
 function courseReasons(course: Course, profile: StudentProfile) {

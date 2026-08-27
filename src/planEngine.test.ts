@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mockCatalog } from "./mockCatalog";
-import { activeAnnualCap, calculateProgress, creditsCountedForCurrentTerm, generatePlan } from "./planEngine";
+import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, creditsCountedForCurrentTerm, generatePlan } from "./planEngine";
 import type { Course, Dataset, StudentProfile } from "./types";
 
 function profile(overrides: Partial<StudentProfile> = {}): StudentProfile {
@@ -11,6 +11,7 @@ function profile(overrides: Partial<StudentProfile> = {}): StudentProfile {
     annualCapBonusLocked: false,
     completedCourseIds: [],
     wanted: {},
+    autoRequiredCourseIds: [],
     rechallengeCourseIds: [],
     lotteryStates: {},
     hardBlockedSlots: [],
@@ -118,17 +119,32 @@ describe("履修計画エンジン", () => {
     expect(result.rejected[0]?.reasons.join(" ")).toContain("開講クラスがありません");
   });
 
-  it("再履修専用クラスは再チャレンジ指定時だけ候補に入れる", () => {
+  it("未修得の再履修クラスは候補に入り、修得済みなら再チャレンジ指定が必要", () => {
     const course: Course = {
       id: "retry", code: "RE", name: "再履修", credits: 2, category: "general", requirementType: "required", recommendedGrade: 1, recommendedTerm: "spring",
       offerings: [{ id: "retry-1", term: "spring", classCode: "再履修1", weekday: "mon", periods: [1], lottery: true, rechallengeOnly: true }],
     };
     const dataset = { ...mockCatalog, courses: [course] };
-    const withoutRetry = generatePlan(dataset, profile({ wanted: { retry: "must" } }));
+    const incomplete = generatePlan(dataset, profile({ wanted: { retry: "must" } }));
+    const completedWithoutRetry = generatePlan(dataset, profile({ completedCourseIds: ["retry"], wanted: { retry: "must" } }));
     const withRetry = generatePlan(dataset, profile({ completedCourseIds: ["retry"], rechallengeCourseIds: ["retry"], wanted: { retry: "must" } }));
 
-    expect(withoutRetry.selected).toHaveLength(0);
+    expect(incomplete.selected.map((item) => item.course.id)).toEqual(["retry"]);
+    expect(completedWithoutRetry.selected).toHaveLength(0);
     expect(withRetry.selected.map((item) => item.course.id)).toEqual(["retry"]);
+  });
+
+  it("当該学期に開講する未修得の必修科目だけを自動選択する", () => {
+    const requiredSpring: Course = { id: "required-spring", code: "RS", name: "前期必修", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 1, recommendedTerm: "spring", offerings: [{ id: "rs", term: "spring", classCode: "X1", weekday: "mon", periods: [1], lottery: false }] };
+    const requiredFall: Course = { id: "required-fall", code: "RF", name: "後期必修", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 1, recommendedTerm: "fall", offerings: [{ id: "rf", term: "fall", classCode: "X1", weekday: "tue", periods: [1], lottery: false }] };
+    const electiveSpring: Course = { id: "elective-spring", code: "ES", name: "前期選択", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", offerings: [{ id: "es", term: "spring", classCode: "X1", weekday: "wed", periods: [1], lottery: false }] };
+    const futureRequired: Course = { id: "future-required", code: "FR", name: "上級必修", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 2, recommendedTerm: "spring", offerings: [{ id: "fr", term: "spring", classCode: "X1", weekday: "thu", periods: [1], lottery: false }] };
+    const retakeRequired: Course = { id: "retake-required", code: "RR", name: "再履修必修", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 1, recommendedTerm: "spring", offerings: [{ id: "rr", term: "spring", classCode: "再履修1", weekday: "fri", periods: [1], lottery: false, rechallengeOnly: true }] };
+    const dataset = { ...mockCatalog, courses: [requiredSpring, requiredFall, electiveSpring, futureRequired, retakeRequired] };
+
+    expect(autoRequiredCourseIds(dataset, profile())).toEqual(["required-spring", "retake-required"]);
+    expect(autoRequiredCourseIds(dataset, profile({ completedCourseIds: ["required-spring"] }))).toEqual(["retake-required"]);
+    expect(autoRequiredCourseIds(dataset, profile({ term: "fall" }))).toEqual(["required-fall"]);
   });
 
   it("通年科目は後期から新規に履修登録できない", () => {

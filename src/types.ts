@@ -82,6 +82,8 @@ export interface StudentProfile {
   annualCapBonusLocked: boolean;
   completedCourseIds: string[];
   wanted: Record<string, "must" | "prefer">;
+  /** 現在の学期に開講する未修得必修として、ツールが自動で「必ず取りたい」にした科目。 */
+  autoRequiredCourseIds: string[];
   rechallengeCourseIds: string[];
   lotteryStates: Record<string, "none" | "applied" | "lost" | "won">;
   hardBlockedSlots: string[];

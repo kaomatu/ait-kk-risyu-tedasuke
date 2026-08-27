@@ -23,6 +23,7 @@ interface StoredProfile {
   annualCapBonusLocked: boolean;
   completedCourseIds: string[];
   wanted: Record<string, "must" | "prefer">;
+  autoRequiredCourseIds: string[];
   rechallengeCourseIds: string[];
   lotteryStates: Record<string, "none" | "applied" | "lost" | "won">;
   hardBlockedSlots: string[];
@@ -130,6 +131,7 @@ function validProfile(value: unknown): value is StoredProfile {
     && typeof profile.annualCapBonusLocked === "boolean"
     && Array.isArray(profile.completedCourseIds)
     && typeof profile.wanted === "object"
+    && Array.isArray(profile.autoRequiredCourseIds)
     && Array.isArray(profile.rechallengeCourseIds)
     && typeof profile.lotteryStates === "object"
     && Array.isArray(profile.hardBlockedSlots)

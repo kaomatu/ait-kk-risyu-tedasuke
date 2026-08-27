@@ -23,6 +23,7 @@ assert.equal(offerings.filter((offering) => offering.lottery && offering.eligibl
 assert.equal(new Set(offerings.map((offering) => offering.id)).size, offerings.length, "開講IDが一意であること");
 assert.ok(offerings.every((offering) => offering.lottery || !offering.notes?.includes("抽選")), "抽選の注記がある開講は必ず抽選扱いになること");
 assert.ok(kkSeedCourses.every((course) => !course.id.startsWith("ait.kk.schedule-only.") || course.offerings.some((offering) => offering.eligibleForProgram !== false)), "対象外のみの時間割専用科目をKKの候補に出さないこと");
+assert.ok(kkSeedCourses.every((course) => ["required", "required_elective", "elective", "non_counting"].includes(course.requirementType)), "全科目に必修／選択区分があること");
 
 const courseByCode = new Map(kkSeedCourses.map((course) => [course.code, course]));
 const linearAlgebra2 = courseByCode.get("K2061");
@@ -32,6 +33,13 @@ assert.deepEqual(
   "線形代数Ⅱを1年後期・火曜III限の2クラスとして取り込むこと",
 );
 assert.equal(courseByCode.get("G2008")?.name, "健康・スポーツ科学実習Ⅰ", "教育課程表の正式コードを使用すること");
+assert.deepEqual(
+  [...courseByCode.values()].filter((course) => course.requirementType === "required").map((course) => course.code).sort(),
+  ["G1829", "G1831", "G3834", "K1003", "K1005", "K1016", "K1017", "K1018", "K1019", "K1020", "K1021", "K1022", "K1023"].sort(),
+  "教育課程表の必修欄と必修区分が一致すること",
+);
+assert.equal(courseByCode.get("K2113")?.requirementType, "elective", "キャリアデザインⅡは選択科目として扱うこと");
+assert.equal(courseByCode.get("K2022")?.requirementType, "elective", "プログラミング及び演習Ⅱは選択科目として扱うこと");
 
 const kkLotteryWithoutOfficialCode = [
   "インターネットビジネス論", "カラーデザイン", "ゲームプログラミング", "サウンドメディア論",

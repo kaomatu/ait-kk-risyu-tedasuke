@@ -45,9 +45,9 @@ export const kkSeedCourses: SeedCourse[] = createKk2026Courses();
 
 export function createKkSeedDataset() {
   return {
-    datasetVersionId: "ait-is-kk-entry2026-offering2026-v2",
+    datasetVersionId: "ait-is-kk-entry2026-offering2026-v3",
     status: "published",
-    sourceStatus: "attached_sources_reconciled_two_pass_reviewed",
+    sourceStatus: "attached_sources_reconciled_requirement_types_reviewed",
     program: {
       faculty: "情報科学部",
       department: "情報科学科",
