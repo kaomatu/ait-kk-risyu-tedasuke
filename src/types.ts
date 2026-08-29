@@ -82,6 +82,10 @@ export interface StudentProfile {
   annualCapBonusLocked: boolean;
   completedCourseIds: string[];
   wanted: Record<string, "must" | "prefer">;
+  /** 今学期に開講しない科目も含む、中長期の履修目標。 */
+  futureGoalCourseIds: string[];
+  /** 今学期に履修したい単位数。未入力時は推薦を出さない。 */
+  targetTermCredits: number | null;
   /** 現在の学期に開講する未修得必修として、ツールが自動で「必ず取りたい」にした科目。 */
   autoRequiredCourseIds: string[];
   rechallengeCourseIds: string[];
@@ -106,6 +110,13 @@ export interface PlanItem {
   course: Course;
   offering: Offering;
   priority: "must" | "prefer" | "suggested";
+}
+
+/** 目標単位に届かない場合に、利用者が追加を判断するための候補。自動登録はしない。 */
+export interface CourseRecommendation {
+  course: Course;
+  offering: Offering;
+  reasons: string[];
 }
 
 export interface RejectedCourse {

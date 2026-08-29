@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadProfileSnapshot, loginWithPassphrase, logout, saveProfileSnapshot, subscribeToAuth } from "./firebase";
-import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan } from "./planEngine";
+import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
 import "./styles.css";
 
@@ -16,6 +16,8 @@ function defaultProfile(): StudentProfile {
     annualCapBonusLocked: false,
     completedCourseIds: [],
     wanted: {},
+    futureGoalCourseIds: [],
+    targetTermCredits: null,
     autoRequiredCourseIds: [],
     rechallengeCourseIds: [],
     lotteryStates: {},
@@ -29,7 +31,7 @@ function profileFromUnknown(value: unknown): StudentProfile | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<StudentProfile>;
   if (!Number.isInteger(candidate.currentGrade) || (candidate.term !== "spring" && candidate.term !== "fall")) return null;
-  if (!Array.isArray(candidate.completedCourseIds) || !candidate.wanted || (candidate.autoRequiredCourseIds !== undefined && !Array.isArray(candidate.autoRequiredCourseIds)) || !Array.isArray(candidate.rechallengeCourseIds) || !candidate.lotteryStates || !Array.isArray(candidate.hardBlockedSlots) || !Array.isArray(candidate.softBlockedSlots)) return null;
+  if (!Array.isArray(candidate.completedCourseIds) || !candidate.wanted || (candidate.futureGoalCourseIds !== undefined && !Array.isArray(candidate.futureGoalCourseIds)) || (candidate.targetTermCredits !== undefined && candidate.targetTermCredits !== null && typeof candidate.targetTermCredits !== "number") || (candidate.autoRequiredCourseIds !== undefined && !Array.isArray(candidate.autoRequiredCourseIds)) || !Array.isArray(candidate.rechallengeCourseIds) || !candidate.lotteryStates || !Array.isArray(candidate.hardBlockedSlots) || !Array.isArray(candidate.softBlockedSlots)) return null;
   return { ...defaultProfile(), ...candidate };
 }
 
@@ -101,11 +103,16 @@ export default function App() {
         ...previousAutoIds.filter((id) => desired.has(id) && wanted[id] === "must"),
         ...newAutoIds,
       ];
+      const requiredSlots = requiredScheduleSlots(dataset, { ...current, wanted, autoRequiredCourseIds: nextAutoIds });
+      const hardBlockedSlots = current.hardBlockedSlots.filter((slot) => !requiredSlots.includes(slot));
+      const softBlockedSlots = current.softBlockedSlots.filter((slot) => !requiredSlots.includes(slot));
       const unchanged = nextAutoIds.length === previousAutoIds.length
         && nextAutoIds.every((id, index) => id === previousAutoIds[index])
         && Object.keys(wanted).length === Object.keys(current.wanted).length
-        && Object.entries(wanted).every(([id, priority]) => current.wanted[id] === priority);
-      return unchanged ? current : { ...current, wanted, autoRequiredCourseIds: nextAutoIds };
+        && Object.entries(wanted).every(([id, priority]) => current.wanted[id] === priority)
+        && hardBlockedSlots.length === current.hardBlockedSlots.length
+        && softBlockedSlots.length === current.softBlockedSlots.length;
+      return unchanged ? current : { ...current, wanted, autoRequiredCourseIds: nextAutoIds, hardBlockedSlots, softBlockedSlots };
     });
     setPlan(null);
   }, [dataset, profile.currentGrade, profile.term, profile.completedCourseIds]);
@@ -357,14 +364,35 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, s
   const automaticRequiredCourses = profile.autoRequiredCourseIds
     .map((id) => dataset.courses.find((course) => course.id === id))
     .filter((course): course is Course => Boolean(course));
+  const protectedRequiredSlots = useMemo(() => requiredScheduleSlots(dataset, profile), [dataset, profile]);
+  const recommendations = useMemo(() => plan ? recommendCourses(dataset, profile, plan) : [], [dataset, profile, plan]);
+
+  function isOfferedThisTerm(course: Course) {
+    return course.offerings.some((offering) => canUseOffering(course, offering, profile));
+  }
 
   function toggleWanted(course: Course) {
+    // 自動選択された必修は、計画の土台として固定する。
+    if (profile.autoRequiredCourseIds.includes(course.id)) return;
     const current = profile.wanted[course.id];
     const wanted = { ...profile.wanted };
     if (!current) wanted[course.id] = "prefer";
     else if (current === "prefer") wanted[course.id] = "must";
     else delete wanted[course.id];
-    patchProfile({ wanted, autoRequiredCourseIds: profile.autoRequiredCourseIds.filter((id) => id !== course.id) });
+    // 学期変更で将来目標だった科目が今期に開講した場合は、二重の意図を残さない。
+    patchProfile({ wanted, futureGoalCourseIds: profile.futureGoalCourseIds.filter((id) => id !== course.id) });
+  }
+
+  function toggleFutureGoal(course: Course) {
+    const futureGoalCourseIds = profile.futureGoalCourseIds.includes(course.id)
+      ? profile.futureGoalCourseIds.filter((id) => id !== course.id)
+      : [...profile.futureGoalCourseIds, course.id];
+    patchProfile({ futureGoalCourseIds });
+  }
+
+  function toggleCourseIntent(course: Course) {
+    if (isOfferedThisTerm(course)) toggleWanted(course);
+    else toggleFutureGoal(course);
   }
 
   function toggleCompleted(courseId: string) {
@@ -383,6 +411,7 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, s
 
   function cycleSlot(weekday: Weekday, period: number) {
     const key = slotKey(weekday, period);
+    if (protectedRequiredSlots.includes(key)) return;
     if (profile.hardBlockedSlots.includes(key)) {
       patchProfile({ hardBlockedSlots: profile.hardBlockedSlots.filter((slot) => slot !== key), softBlockedSlots: [...profile.softBlockedSlots, key] });
     } else if (profile.softBlockedSlots.includes(key)) {
@@ -393,30 +422,31 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, s
   }
 
   return <>
-    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / PLANNER</p><h1>履修の希望と、要件をひとつに。</h1><p>現在学期で開講する未修得の必修科目は「必ず取りたい」に自動設定します。カードをクリックすると希望は手動で変更できます。</p></div><div className="planner-actions"><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
+    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / PLANNER</p><h1>履修の希望と、要件をひとつに。</h1><p>未修得の必修を先に固定し、今期の希望・先修条件・空き希望の順で履修案を組みます。今期に開講しないカードは、将来の目標として選択できます。</p></div><div className="planner-actions"><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
     <section className="profile-strip section-card">
       <label>現在の学年<select value={profile.currentGrade} onChange={(event) => patchProfile({ currentGrade: Number(event.target.value) })}>{[1, 2, 3, 4].map((grade) => <option value={grade} key={grade}>{grade}年次</option>)}</select></label>
       <label>現在の学期<select value={profile.term} onChange={(event) => patchProfile({ term: event.target.value as StudentProfile["term"] })}><option value="spring">前期</option><option value="fall">後期</option></select></label>
       <label>通算GPA<input type="number" step="0.01" min="0" max="4" placeholder="不明なら空欄" value={profile.gpa ?? ""} onChange={(event) => patchProfile({ gpa: event.target.value === "" ? null : Number(event.target.value) })} /><small>進級判定の目安用。現在の入力だけで上限は変わりません。</small></label>
       <label>今年度の登録済み単位<input type="number" min="0" max={annualCap} value={profile.annualRegisteredCredits} onChange={(event) => patchProfile({ annualRegisteredCredits: Number(event.target.value) })} /></label>
+      <label>今期に取りたい単位数<input type="number" min="0" max={dataset.policies.termCap} placeholder="任意" value={profile.targetTermCredits ?? ""} onChange={(event) => patchProfile({ targetTermCredits: event.target.value === "" ? null : Number(event.target.value) })} /><small>不足時は候補のみ表示し、自動追加はしません。</small></label>
       <label className="check-label"><input type="checkbox" checked={profile.annualCapBonusLocked} onChange={(event) => patchProfile({ annualCapBonusLocked: event.target.checked })} /> 進級時の判定で年間52単位の優遇を取得済み</label>
     </section>
-    {automaticRequiredCourses.length > 0 && <section className="notice auto-required-notice" role="status"><strong>必修を自動選択しました</strong><p>{automaticRequiredCourses.map((course) => course.name).join("、")}</p></section>}
+    {automaticRequiredCourses.length > 0 && <section className="notice auto-required-notice" role="status"><strong>必修を自動選択・固定しました</strong><p>{automaticRequiredCourses.map((course) => course.name).join("、")}</p></section>}
     <section className="planner-layout">
       <div className="planner-main">
-        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">CURRICULUM TREE</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-required" />必修 <i className="legend-completed" />修得済 <i className="legend-wanted" />希望 <i className="legend-blocked" />前提未達</span></div>
-          <div className="tree-grid">{catalogByGrade.map(({ grade, courses }) => <section className="tree-column" key={grade}><h3>{grade}年次</h3>{courses.map((course) => <button key={course.id} className={`course-card ${statusClass(course, profile)} ${course.requirementType} ${profile.wanted[course.id] ?? ""}`} onClick={() => toggleWanted(course)}><span className="course-code">{displayCourseCode(course)}</span><div className="course-title"><strong>{course.name}</strong><span className={`requirement-badge ${course.requirementType}`}>{labelRequirement(course)}</span></div><small>{course.credits}単位 / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}</small>{profile.wanted[course.id] && <em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・自動選択" : profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}</button>)}</section>)}</div>
+        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">CURRICULUM TREE</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-required" />必修 <i className="legend-completed" />修得済 <i className="legend-wanted" />今期の希望 <i className="legend-blocked" />前提未達</span></div><p className="compact">今期に開講するカードは「できれば」→「必ず」→解除。今期に開講しないカードは、クリックで「将来の目標」を切り替えます。</p>
+          <div className="tree-grid">{catalogByGrade.map(({ grade, courses }) => <section className="tree-column" key={grade}><h3>{grade}年次</h3>{courses.map((course) => { const offeredThisTerm = isOfferedThisTerm(course); return <button key={course.id} className={`course-card ${statusClass(course, profile)} ${course.requirementType} ${profile.wanted[course.id] ?? ""} ${profile.futureGoalCourseIds.includes(course.id) ? "future-goal" : ""}`} onClick={() => toggleCourseIntent(course)} disabled={profile.autoRequiredCourseIds.includes(course.id)}><span className="course-code">{displayCourseCode(course)}</span><div className="course-title"><strong>{course.name}</strong><span className={`requirement-badge ${course.requirementType}`}>{labelRequirement(course)}</span></div><small>{course.credits}単位 / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}{offeredThisTerm ? " / 今期開講" : " / 今期は未開講"}</small>{profile.wanted[course.id] && <em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・自動選択" : profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}{!profile.wanted[course.id] && profile.futureGoalCourseIds.includes(course.id) && <em className="future-goal-label">将来の目標</em>}</button>; })}</section>)}</div>
         </article>
         <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COMPLETED HISTORY</p><h2>修得済みの科目</h2></div><span className="pill">選択式入力</span></div><p>カタログから科目を選択して修得履歴を入力します。自由入力は使いません。</p><div className="history-list">{dataset.courses.map((course) => <label key={course.id} className="history-item"><input type="checkbox" checked={profile.completedCourseIds.includes(course.id)} onChange={() => toggleCompleted(course.id)} /> <span>{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位</small></label>)}</div>{profile.completedCourseIds.length > 0 && <div className="rechallenge-list"><p><b>再チャレンジ履修</b>（修得済みでも今期にもう一度履修する科目）</p>{profile.completedCourseIds.map((id) => { const course = dataset.courses.find((item) => item.id === id); return course ? <label key={id} className="mini-check"><input type="checkbox" checked={profile.rechallengeCourseIds.includes(id)} onChange={() => toggleRechallenge(id)} /> {course.name}</label> : null; })}</div>}</article>
       </div>
       <aside className="planner-side">
-        <article className="section-card"><p className="eyebrow">FREE TIME</p><h2>空けたい時限</h2><p className="compact">クリック: 固定で空ける → できれば空ける → 解除</p><div className="slot-grid"><span />{weekdays.map((day) => <span className="slot-header" key={day}>{weekdayLabels[day]}</span>)}{periods.map((period) => <Fragment key={`period-${period}`}><span className="period-label">{period}</span>{weekdays.map((day) => { const key = slotKey(day, period); const mode = profile.hardBlockedSlots.includes(key) ? "hard" : profile.softBlockedSlots.includes(key) ? "soft" : ""; return <button key={key} className={`slot ${mode}`} onClick={() => cycleSlot(day, period)} aria-label={`${weekdayLabels[day]}曜日${period}限`}>{mode === "hard" ? "空" : mode === "soft" ? "△" : ""}</button>; })}</Fragment>)}</div><div className="slot-caption"><span>空 = 固定</span><span>△ = できれば</span></div></article>
+        <article className="section-card"><p className="eyebrow">FREE TIME</p><h2>空けたい時限</h2><p className="compact">クリック: 固定で空ける → できれば空ける → 解除。必修の固定枠は「必」と表示され、空き希望にはできません。</p><div className="slot-grid"><span />{weekdays.map((day) => <span className="slot-header" key={day}>{weekdayLabels[day]}</span>)}{periods.map((period) => <Fragment key={`period-${period}`}><span className="period-label">{period}</span>{weekdays.map((day) => { const key = slotKey(day, period); const protectedSlot = protectedRequiredSlots.includes(key); const mode = profile.hardBlockedSlots.includes(key) ? "hard" : profile.softBlockedSlots.includes(key) ? "soft" : ""; return <button key={key} disabled={protectedSlot} className={`slot ${mode} ${protectedSlot ? "required-slot" : ""}`} onClick={() => cycleSlot(day, period)} aria-label={`${weekdayLabels[day]}曜日${period}限`}>{protectedSlot ? "必" : mode === "hard" ? "空" : mode === "soft" ? "△" : ""}</button>; })}</Fragment>)}</div><div className="slot-caption"><span>必 = 必修の固定枠</span><span>空 = 固定</span><span>△ = できれば</span></div></article>
         {progress && <article className="section-card"><p className="eyebrow">REQUIREMENTS</p><h2>要件の進捗</h2><ProgressLine label="進級用合計" value={progress.projectedProgression} target={dataset.policies.progression.find((rule) => rule.toGrade === Math.min(4, profile.currentGrade + 1))?.minCredits ?? 105} /><ProgressLine label="専門合計" value={progress.specializedTotal} target={dataset.policies.graduation.specializedTotal} /><ProgressLine label="総合合計" value={progress.generalTotal} target={dataset.policies.graduation.generalTotal} /><ProgressLine label="英語系" value={progress.english} target={dataset.policies.graduation.english} /><ProgressLine label="卒業総計" value={progress.graduationTotal} target={dataset.policies.graduation.total} /></article>}
         {lotteryCourses.length > 0 && <article className="section-card"><p className="eyebrow">LOTTERY STATUS</p><h2>抽選の状況</h2><p className="compact">結果を手動で反映します。落選後は同じ科目を再申請でき、当選後は別クラスへ申請できません。</p><div className="lottery-list">{lotteryCourses.map((course) => <label key={course.id}>{course.name}<select value={profile.lotteryStates[course.id] ?? "none"} onChange={(event) => patchProfile({ lotteryStates: { ...profile.lotteryStates, [course.id]: event.target.value as "none" | "applied" | "lost" | "won" } })}><option value="none">未申請</option><option value="applied">申請中</option><option value="lost">落選（再申請可能）</option><option value="won">当選済み</option></select></label>)}</div></article>}
         <SnapshotControls snapshots={snapshots} busy={snapshotBusy} onSave={onSaveSnapshot} onLoad={onLoadSnapshot} />
       </aside>
     </section>
-    {plan && <PlanResultView dataset={dataset} profile={profile} plan={plan} />}
+    {plan && <PlanResultView dataset={dataset} profile={profile} plan={plan} recommendations={recommendations} onAddRecommendation={(course) => patchProfile({ wanted: { ...profile.wanted, [course.id]: "prefer" }, futureGoalCourseIds: profile.futureGoalCourseIds.filter((id) => id !== course.id) })} />}
   </>;
 }
 
@@ -441,11 +471,13 @@ function SnapshotControls({ snapshots, busy, onSave, onLoad }: { snapshots: Prof
   return <article className="section-card snapshot-controls"><p className="eyebrow">SAVED PLANS</p><h2>保存・読み込み</h2><p className="compact">保存するたびに No. を自動で増やします。保存データの削除は行いません。</p><button className="secondary-button full" disabled={busy} onClick={() => void save()}>{busy ? "保存中…" : "保存する"}</button><label>読み込むデータ<select value={selectedSnapshotNo} disabled={busy || snapshots.length === 0} onChange={(event) => setSelectedSnapshotNo(event.target.value)}><option value="">No. を選択</option>{snapshots.map((snapshot) => <option value={snapshot.snapshotNo} key={snapshot.snapshotNo}>No. {snapshot.snapshotNo}（{new Date(snapshot.savedAt).toLocaleString("ja-JP")}）</option>)}</select></label><button className="primary-button full" disabled={busy || !selectedSnapshotNo} onClick={() => void load()}>{busy ? "読み込み中…" : "読み込む"}</button>{snapshots.length === 0 && <small>まだ保存データはありません。最初の保存は No. 1 です。</small>}</article>;
 }
 
-function PlanResultView({ dataset, profile, plan }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult }) {
+function PlanResultView({ dataset, profile, plan, recommendations, onAddRecommendation }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult; recommendations: ReturnType<typeof recommendCourses>; onAddRecommendation: (course: Course) => void }) {
   const annualCap = activeAnnualCap(dataset, profile);
+  const plannedCredits = plan.selected.reduce((sum, item) => sum + item.course.credits, 0);
   return <section className="plan-result"><div className="section-heading"><div><p className="eyebrow">PLAN RESULT</p><h2>今学期の履修案</h2></div><span className={plan.rejected.length ? "pill warning" : "pill success"}>{plan.rejected.length ? "注意あり" : "登録可能"}</span></div>
-    <div className="metric-grid compact-metrics"><Metric label="取得見込み" value={`${plan.selected.reduce((sum, item) => sum + item.course.credits, 0)}単位`} detail="全科目に合格した場合" /><Metric label="抽選結果待ち" value={`${plan.lotteryCredits}単位`} detail="当選は保証されません" /><Metric label="学期上限" value={`${plan.capCountedCredits} / ${dataset.policies.termCap}`} detail="上限算入単位" /><Metric label="年間上限" value={`${profile.annualRegisteredCredits + plan.capCountedCredits} / ${annualCap}`} detail="登録済み分を含む" /></div>
-    <div className="plan-cards">{plan.selected.length ? plan.selected.map(({ course, offering, priority }) => <article className="plan-card" key={offering.id}><span className="course-code">{displayCourseCode(course)}</span><h3>{course.name}</h3><p>{weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限 / クラス {offering.classCode}</p><small>{course.credits}単位・{labelRequirement(course)}{offering.lottery ? "・抽選" : ""}{offering.alternateWeeks ? "・隔週" : ""}</small><em>{priority === "must" ? "希望を優先" : priority === "prefer" ? "希望科目" : "配当期の候補"}</em></article>) : <p>条件に合う開講科目がありません。希望・修得履歴・空けたい時限を見直してください。</p>}</div>
+    <div className="metric-grid compact-metrics"><Metric label="取得見込み" value={`${plannedCredits}単位`} detail="全科目に合格した場合" /><Metric label="抽選結果待ち" value={`${plan.lotteryCredits}単位`} detail="当選は保証されません" /><Metric label="学期上限" value={`${plan.capCountedCredits} / ${dataset.policies.termCap}`} detail="上限算入単位" /><Metric label="年間上限" value={`${profile.annualRegisteredCredits + plan.capCountedCredits} / ${annualCap}`} detail="登録済み分を含む" /></div>
+    <div className="plan-cards">{plan.selected.length ? plan.selected.map(({ course, offering, priority }) => <article className="plan-card" key={offering.id}><span className="course-code">{displayCourseCode(course)}</span><h3>{course.name}</h3><p>{weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限 / クラス {offering.classCode}</p><small>{course.credits}単位・{labelRequirement(course)}{offering.lottery ? "・抽選" : ""}{offering.alternateWeeks ? "・隔週" : ""}</small><em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・固定" : priority === "must" ? "希望を優先" : priority === "prefer" ? "希望科目" : "配当期の候補"}</em></article>) : <p>条件に合う開講科目がありません。希望・修得履歴・空けたい時限を見直してください。</p>}</div>
+    {profile.targetTermCredits !== null && plannedCredits < profile.targetTermCredits && <section className="recommendation-box"><div><p className="eyebrow">OPTIONAL RECOMMENDATIONS</p><h3>あと {profile.targetTermCredits - plannedCredits} 単位の候補</h3><p>履修案には自動追加しません。理由を確認してから「できれば取りたい」に追加してください。</p></div>{recommendations.length > 0 ? <div className="recommendation-list">{recommendations.map(({ course, offering, reasons }) => <article key={course.id} className="recommendation-card"><div><span className="course-code">{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位 / {weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限{offering.lottery ? " / 抽選" : ""}</small><p>{reasons.join("・")}</p></div><button className="secondary-button" onClick={() => onAddRecommendation(course)}>できれば取りたいに追加</button></article>)}</div> : <p className="recommendation-empty">現在の時間割・上限・先修条件を満たした追加候補はありません。空き希望または目標単位を見直してください。</p>}</section>}
     {plan.warnings.length > 0 && <div className="notice warning-box"><strong>注意</strong><ul>{plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
     {plan.rejected.length > 0 && <div className="notice"><strong>選べなかった希望科目</strong><ul>{plan.rejected.map(({ course, reasons }) => <li key={course.id}><b>{course.name}</b>: {reasons.join(" ")}</li>)}</ul></div>}
     <p className="disclaimer">この結果は計画支援です。最終的な履修可否は、最新の公式資料と大学の履修登録画面で確認してください。</p>

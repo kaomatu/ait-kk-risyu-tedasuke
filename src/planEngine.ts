@@ -1,4 +1,4 @@
-import type { Course, Dataset, PlanItem, PlanResult, StudentProfile } from "./types";
+import type { Course, CourseRecommendation, Dataset, PlanItem, PlanResult, StudentProfile } from "./types";
 import { slotKey } from "./types";
 
 const isCountedForProgression = (course: Course) => course.countForProgression !== false;
@@ -39,8 +39,9 @@ export function autoRequiredCourseIds(dataset: Dataset, profile: StudentProfile)
     .filter((course) => course.recommendedTerm !== "full_year" || profile.term === "spring")
     .filter((course) => {
       const availableOfferings = offeringForTerm(course, profile);
-      // 正規開講は配当学年に限る。未修得者向けの再履修クラスだけは上級年次でも対象にする。
-      return availableOfferings.some((offering) => offering.rechallengeOnly) || course.recommendedGrade === profile.currentGrade;
+      // 過年度に未修得の必修は、通常クラスであっても今期に開講していれば自動対象にする。
+      // ただし、将来学年の科目を先取りすることはしない。
+      return availableOfferings.some((offering) => offering.rechallengeOnly) || course.recommendedGrade <= profile.currentGrade;
     })
     .filter((course) => offeringForTerm(course, profile).length > 0)
     .map((course) => course.id);
@@ -63,8 +64,10 @@ function courseReasons(course: Course, profile: StudentProfile) {
   return reasons;
 }
 
-function priorityOf(course: Course, profile: StudentProfile): PlanItem["priority"] {
-  return profile.wanted[course.id] ?? "suggested";
+type DesiredPriority = "must" | "prefer";
+
+function priorityOf(course: Course, priorities: Map<string, DesiredPriority>): PlanItem["priority"] {
+  return priorities.get(course.id) ?? "suggested";
 }
 
 type Offering = Course["offerings"][number];
@@ -78,12 +81,15 @@ function offeringSlots(offering: Offering) {
  * 先に処理した科目の最初のクラスに固定せず、後から抽選科目を追加しても、
  * 必要なら既存科目を別クラスへ振り替える。
  */
-function findCompatibleSchedule(courses: Course[], profile: StudentProfile): Map<string, Offering> | null {
+function findCompatibleSchedule(courses: Course[], profile: StudentProfile, fixedAssignments = new Map<string, Offering>()): Map<string, Offering> | null {
   const candidateCourses = courses
     .map((course) => ({
       course,
-      offerings: offeringForTerm(course, profile)
-        .filter((offering) => !offeringSlots(offering).some((slot) => profile.hardBlockedSlots.includes(slot))),
+      // 現在学期の必修として固定されたクラスは、空き希望より優先する。
+      offerings: fixedAssignments.has(course.id)
+        ? [fixedAssignments.get(course.id)!]
+        : offeringForTerm(course, profile)
+          .filter((offering) => !offeringSlots(offering).some((slot) => profile.hardBlockedSlots.includes(slot))),
     }))
     // 選択肢の少ない科目を先に置くと、必要な探索回数を大きく抑えられる。
     .sort((a, b) => a.offerings.length - b.offerings.length || a.course.code.localeCompare(b.course.code, "ja"));
@@ -111,15 +117,77 @@ function findCompatibleSchedule(courses: Course[], profile: StudentProfile): Map
   return place(0) ? assignment : null;
 }
 
+/**
+ * 「取りたい科目」と将来目標から、未修得の実線前提科目を再帰的に取り出す。
+ * 必ず取りたい科目からの前提は必須扱い、それ以外からの前提は希望扱いにする。
+ */
+export function prerequisitePriorities(dataset: Dataset, profile: StudentProfile) {
+  const byId = new Map(dataset.courses.map((course) => [course.id, course]));
+  const priorities = new Map<string, DesiredPriority>();
+
+  function stronger(existing: DesiredPriority | undefined, next: DesiredPriority) {
+    return existing === "must" || next === "must" ? "must" : "prefer";
+  }
+
+  function visit(courseId: string, priority: DesiredPriority, visiting: Set<string>) {
+    const course = byId.get(courseId);
+    if (!course || visiting.has(courseId)) return;
+    const nextVisiting = new Set(visiting).add(courseId);
+    for (const prerequisiteId of course.hardPrerequisites ?? []) {
+      if (profile.completedCourseIds.includes(prerequisiteId)) continue;
+      const previous = priorities.get(prerequisiteId);
+      const inherited = stronger(previous, priority);
+      if (previous !== inherited) priorities.set(prerequisiteId, inherited);
+      visit(prerequisiteId, inherited, nextVisiting);
+    }
+  }
+
+  for (const [courseId, priority] of Object.entries(profile.wanted)) visit(courseId, priority, new Set());
+  // 旧保存データを読み込んだ直後でも安全に扱えるよう、未定義は空配列として扱う。
+  for (const courseId of profile.futureGoalCourseIds ?? []) visit(courseId, "prefer", new Set());
+  return priorities;
+}
+
+/** 今期に実際に履修案へ追加できる、先修条件由来の科目だけを返す。 */
+export function effectiveWantedPriorities(dataset: Dataset, profile: StudentProfile) {
+  const priorities = new Map<string, DesiredPriority>(Object.entries(profile.wanted));
+  const derived = prerequisitePriorities(dataset, profile);
+  for (const [courseId, priority] of derived) {
+    if (priorities.has(courseId)) continue;
+    const course = dataset.courses.find((item) => item.id === courseId);
+    // 実線前提は同時履修できないため、前提科目自身が既に履修可能な場合だけ今期案へ足す。
+    if (course && courseReasons(course, profile).length === 0) priorities.set(courseId, priority);
+  }
+  return priorities;
+}
+
+function automaticRequiredAssignments(dataset: Dataset, profile: StudentProfile) {
+  const automaticCourses = profile.autoRequiredCourseIds
+    .map((id) => dataset.courses.find((course) => course.id === id))
+    .filter((course): course is Course => Boolean(course))
+    .filter((course) => courseReasons(course, profile).length === 0);
+  // 必修同士の時間割を確定する時点では、利用者の空き希望は適用しない。
+  return findCompatibleSchedule(automaticCourses, { ...profile, hardBlockedSlots: [] });
+}
+
+/** 自動選択された必修が使う時限。空けたい時限には指定できない。 */
+export function requiredScheduleSlots(dataset: Dataset, profile: StudentProfile) {
+  const assignments = automaticRequiredAssignments(dataset, profile);
+  return assignments ? [...assignments.values()].flatMap((offering) => offeringSlots(offering)) : [];
+}
+
 export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanResult {
   const wantedIds = Object.keys(profile.wanted);
+  const effectivePriorities = effectiveWantedPriorities(dataset, profile);
+  const automaticIds = new Set(profile.autoRequiredCourseIds);
+  const fixedRequiredAssignments = automaticRequiredAssignments(dataset, profile) ?? new Map<string, Offering>();
   const ranking = [...dataset.courses]
     // 履修案に入れるのは、利用者が選択した科目だけ。
     // 未修得の必修は画面側で「必ず取りたい」として wanted に自動追加されるため、
     // 配当学年・学期だけを根拠に選択必修／選択科目を勝手に追加しない。
-    .filter((course) => wantedIds.includes(course.id))
+    .filter((course) => effectivePriorities.has(course.id))
     .sort((a, b) => {
-      const score = (course: Course) => priorityOf(course, profile) === "must" ? 3 : priorityOf(course, profile) === "prefer" ? 2 : course.requirementType === "required" ? 1 : 0;
+      const score = (course: Course) => automaticIds.has(course.id) ? 4 : priorityOf(course, effectivePriorities) === "must" ? 3 : 2;
       return score(b) - score(a) || a.code.localeCompare(b.code, "ja");
     });
 
@@ -136,7 +204,7 @@ export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanRes
     }
 
     const coursesToSchedule = [...selected.map((item) => item.course), course];
-    const assignment = findCompatibleSchedule(coursesToSchedule, profile);
+    const assignment = findCompatibleSchedule(coursesToSchedule, profile, fixedRequiredAssignments);
     if (!assignment) {
       if (wantedIds.includes(course.id)) rejected.push({ course, reasons: ["時間割の重複、または空けたい時限（固定）と重なります。"] });
       continue;
@@ -155,7 +223,7 @@ export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanRes
     selected.splice(0, selected.length, ...coursesToSchedule.map((scheduledCourse) => ({
       course: scheduledCourse,
       offering: assignment.get(scheduledCourse.id)!,
-      priority: priorityOf(scheduledCourse, profile),
+      priority: priorityOf(scheduledCourse, effectivePriorities),
     })));
     capCredits += currentTermCredits;
   }
@@ -180,6 +248,61 @@ export function generatePlan(dataset: Dataset, profile: StudentProfile): PlanRes
       .filter((item) => item.offering.lottery && (profile.lotteryStates[item.course.id] ?? "none") === "applied")
       .reduce((sum, item) => sum + item.course.credits, 0),
   };
+}
+
+/**
+ * 目標単位に届かない時の候補。候補は表示だけで、履修案には自動追加しない。
+ * 既に組めた履修案を崩さずに追加できる科目だけに限定する。
+ */
+export function recommendCourses(dataset: Dataset, profile: StudentProfile, plan: PlanResult): CourseRecommendation[] {
+  const target = profile.targetTermCredits;
+  const plannedCredits = plan.selected.reduce((sum, item) => sum + item.course.credits, 0);
+  if (target === null || !Number.isFinite(target) || plannedCredits >= target) return [];
+
+  const futurePrerequisites = prerequisitePriorities(dataset, { ...profile, wanted: {}, autoRequiredCourseIds: [] });
+  const progress = calculateProgress(dataset, profile, plan);
+  const selectedIds = new Set(plan.selected.map((item) => item.course.id));
+  const effectiveWanted = effectiveWantedPriorities(dataset, profile);
+
+  return dataset.courses
+    .filter((course) => !profile.completedCourseIds.includes(course.id))
+    .filter((course) => !effectiveWanted.has(course.id))
+    .filter((course) => courseReasons(course, profile).length === 0)
+    .map((course) => {
+      const trial = generatePlan(dataset, {
+        ...profile,
+        wanted: { ...profile.wanted, [course.id]: "prefer" },
+      });
+      const trialItem = trial.selected.find((item) => item.course.id === course.id);
+      // 既存の履修案を失わず、この候補そのものも選べた時だけ採用する。
+      if (!trialItem || ![...selectedIds].every((id) => trial.selected.some((item) => item.course.id === id))) return null;
+
+      const reasons: string[] = [];
+      let score = 0;
+      if (futurePrerequisites.has(course.id)) {
+        reasons.push("将来の目標科目につながる先修条件です");
+        score += 100;
+      }
+      if (course.requirementType === "required_elective") {
+        reasons.push("選択必修として要件に役立ちます");
+        score += 35;
+      }
+      if (course.tags?.includes("english") && progress.english < dataset.policies.graduation.english) {
+        reasons.push("英語系の卒業要件を補えます");
+        score += 30;
+      }
+      if (course.category === "specialized" && course.recommendedGrade === profile.currentGrade) {
+        reasons.push("現在の学年に配当された専門科目です");
+        score += 15;
+      }
+      if (!trialItem.offering.lottery) score += 5;
+      if (reasons.length === 0) reasons.push("今学期に無理なく追加できる開講科目です");
+      return { course, offering: trialItem.offering, reasons, score };
+    })
+    .filter((item): item is (CourseRecommendation & { score: number }) => item !== null)
+    .sort((a, b) => b.score - a.score || a.course.code.localeCompare(b.course.code, "ja"))
+    .slice(0, 6)
+    .map(({ course, offering, reasons }) => ({ course, offering, reasons }));
 }
 
 export function calculateProgress(dataset: Dataset, profile: StudentProfile, plan: PlanResult | null) {

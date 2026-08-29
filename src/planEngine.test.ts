@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mockCatalog } from "./mockCatalog";
-import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, creditsCountedForCurrentTerm, generatePlan } from "./planEngine";
+import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, creditsCountedForCurrentTerm, generatePlan, prerequisitePriorities, recommendCourses, requiredScheduleSlots } from "./planEngine";
 import type { Course, Dataset, StudentProfile } from "./types";
 
 function profile(overrides: Partial<StudentProfile> = {}): StudentProfile {
@@ -11,6 +11,8 @@ function profile(overrides: Partial<StudentProfile> = {}): StudentProfile {
     annualCapBonusLocked: false,
     completedCourseIds: [],
     wanted: {},
+    futureGoalCourseIds: [],
+    targetTermCredits: null,
     autoRequiredCourseIds: [],
     rechallengeCourseIds: [],
     lotteryStates: {},
@@ -186,6 +188,72 @@ describe("履修計画エンジン", () => {
     expect(autoRequiredCourseIds(dataset, profile())).toEqual(["required-spring", "retake-required"]);
     expect(autoRequiredCourseIds(dataset, profile({ completedCourseIds: ["required-spring"] }))).toEqual(["retake-required"]);
     expect(autoRequiredCourseIds(dataset, profile({ term: "fall" }))).toEqual(["required-fall"]);
+  });
+
+  it("上級年次では、過年度に未修得で今期に開講する必修も自動選択する", () => {
+    const pastRequired: Course = {
+      id: "past-required", code: "PR", name: "過年度必修", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 1, recommendedTerm: "fall",
+      offerings: [{ id: "past-required-fall", term: "fall", classCode: "A", weekday: "mon", periods: [1], lottery: false }],
+    };
+    const futureRequired: Course = {
+      id: "future-required", code: "FR", name: "将来必修", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 3, recommendedTerm: "fall",
+      offerings: [{ id: "future-required-fall", term: "fall", classCode: "A", weekday: "tue", periods: [1], lottery: false }],
+    };
+    const dataset = { ...mockCatalog, courses: [pastRequired, futureRequired] };
+
+    expect(autoRequiredCourseIds(dataset, profile({ currentGrade: 2, term: "fall" }))).toEqual(["past-required"]);
+  });
+
+  it("自動選択した必修は空けたい時限より優先し、必修枠として固定する", () => {
+    const required: Course = {
+      id: "locked-required", code: "LR", name: "固定必修", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [{ id: "locked-required-a", term: "spring", classCode: "A", weekday: "mon", periods: [1], lottery: false }],
+    };
+    const dataset = { ...mockCatalog, courses: [required] };
+    const student = profile({ wanted: { [required.id]: "must" }, autoRequiredCourseIds: [required.id], hardBlockedSlots: ["mon-1"] });
+
+    expect(requiredScheduleSlots(dataset, student)).toEqual(["mon-1"]);
+    expect(generatePlan(dataset, student).selected.map((item) => item.course.id)).toEqual([required.id]);
+  });
+
+  it("将来目標と必ず取りたい科目の実線前提を、優先度を引き継いで今期の候補へ追加する", () => {
+    const foundation: Course = {
+      id: "foundation", code: "F", name: "基礎", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [{ id: "foundation-a", term: "spring", classCode: "A", weekday: "mon", periods: [1], lottery: false }],
+    };
+    const target: Course = {
+      id: "target", code: "T", name: "目標", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", hardPrerequisites: [foundation.id],
+      offerings: [{ id: "target-a", term: "spring", classCode: "A", weekday: "tue", periods: [1], lottery: false }],
+    };
+    const dataset = { ...mockCatalog, courses: [foundation, target] };
+    const mustProfile = profile({ wanted: { [target.id]: "must" } });
+    const futureProfile = profile({ futureGoalCourseIds: [target.id] });
+
+    expect(prerequisitePriorities(dataset, mustProfile).get(foundation.id)).toBe("must");
+    expect(prerequisitePriorities(dataset, futureProfile).get(foundation.id)).toBe("prefer");
+    const result = generatePlan(dataset, mustProfile);
+    expect(result.selected.map((item) => item.course.id)).toEqual([foundation.id]);
+    expect(result.selected[0]?.priority).toBe("must");
+    expect(result.rejected.map((item) => item.course.id)).toEqual([target.id]);
+  });
+
+  it("目標単位に不足する場合でも、候補を勝手に履修案へ追加しない", () => {
+    const selected: Course = {
+      id: "selected", code: "S", name: "選択済み", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [{ id: "selected-a", term: "spring", classCode: "A", weekday: "mon", periods: [1], lottery: false }],
+    };
+    const candidate: Course = {
+      id: "candidate", code: "C", name: "候補", credits: 2, category: "general", requirementType: "required_elective", recommendedGrade: 1, recommendedTerm: "spring",
+      offerings: [{ id: "candidate-a", term: "spring", classCode: "A", weekday: "tue", periods: [1], lottery: false }],
+    };
+    const dataset = { ...mockCatalog, courses: [selected, candidate] };
+    const student = profile({ wanted: { [selected.id]: "must" }, targetTermCredits: 4 });
+    const result = generatePlan(dataset, student);
+    const recommendations = recommendCourses(dataset, student, result);
+
+    expect(result.selected.map((item) => item.course.id)).toEqual([selected.id]);
+    expect(recommendations.map((item) => item.course.id)).toEqual([candidate.id]);
+    expect(result.selected.some((item) => item.course.id === candidate.id)).toBe(false);
   });
 
   it("通年科目は後期から新規に履修登録できない", () => {

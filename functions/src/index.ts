@@ -23,6 +23,8 @@ interface StoredProfile {
   annualCapBonusLocked: boolean;
   completedCourseIds: string[];
   wanted: Record<string, "must" | "prefer">;
+  futureGoalCourseIds?: string[];
+  targetTermCredits?: number | null;
   autoRequiredCourseIds: string[];
   rechallengeCourseIds: string[];
   lotteryStates: Record<string, "none" | "applied" | "lost" | "won">;
@@ -136,6 +138,8 @@ function validProfile(value: unknown): value is StoredProfile {
     && typeof profile.annualCapBonusLocked === "boolean"
     && Array.isArray(profile.completedCourseIds)
     && typeof profile.wanted === "object"
+    && (profile.futureGoalCourseIds === undefined || Array.isArray(profile.futureGoalCourseIds))
+    && (profile.targetTermCredits === undefined || profile.targetTermCredits === null || typeof profile.targetTermCredits === "number")
     && Array.isArray(profile.autoRequiredCourseIds)
     && Array.isArray(profile.rechallengeCourseIds)
     && typeof profile.lotteryStates === "object"
