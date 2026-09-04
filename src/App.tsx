@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loginWithPassphrase, logout, saveGraduationPlan, saveProfileSnapshot, subscribeToAuth } from "./firebase";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
+import { filterPlannerCoursePicker, type CoursePickerTermScope } from "./coursePicker";
 import { GraduationPlanner } from "./GraduationPlanner";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type GraduationPlan, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
 import "./styles.css";
@@ -393,7 +394,10 @@ function IngestionTool({ localPreview, onMessage, onReapplyReviewedDataset }: { 
 }
 
 function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfile, onGenerate, snapshots, snapshotBusy, onSaveSnapshot, onLoadSnapshot }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult | null; progress: ReturnType<typeof calculateProgress> | null; graduationPlan: GraduationPlan | null; patchProfile: (patch: Partial<StudentProfile>) => void; onGenerate: () => void; snapshots: ProfileSnapshotSummary[]; snapshotBusy: boolean; onSaveSnapshot: () => Promise<ProfileSnapshotSummary>; onLoadSnapshot: (snapshotNo: number) => Promise<void> }) {
-  const catalogByGrade = [1, 2, 3, 4].map((grade) => ({ grade, courses: dataset.courses.filter((course) => course.recommendedGrade === grade) }));
+  const [pickerGrade, setPickerGrade] = useState(profile.currentGrade);
+  const [pickerTermScope, setPickerTermScope] = useState<CoursePickerTermScope>("current");
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [expandedPickerCategories, setExpandedPickerCategories] = useState<Record<Course["category"], boolean>>({ specialized: true, general: false });
   const termCourses = dataset.courses.filter((course) => course.offerings.some((offering) => (
     canUseOffering(course, offering, profile)
   )));
@@ -410,6 +414,28 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
     .filter((item): item is { course: Course; priority: "must" | "prefer" } => Boolean(item.course));
   const protectedRequiredSlots = useMemo(() => requiredScheduleSlots(dataset, profile), [dataset, profile]);
   const recommendations = useMemo(() => plan ? recommendCourses(dataset, profile, plan) : [], [dataset, profile, plan]);
+  const selectedPickerCourseIds = useMemo(() => Array.from(new Set([
+    ...Object.keys(profile.wanted),
+    ...profile.futureGoalCourseIds,
+    ...profile.autoRequiredCourseIds,
+    ...Object.keys(profile.autoGraduationPlanWanted ?? {}),
+  ])), [profile.autoGraduationPlanWanted, profile.autoRequiredCourseIds, profile.futureGoalCourseIds, profile.wanted]);
+  const pickerCourses = useMemo(() => filterPlannerCoursePicker(dataset.courses, profile, {
+    grade: pickerGrade,
+    termScope: pickerTermScope,
+    query: pickerQuery,
+    selectedCourseIds: selectedPickerCourseIds,
+  }), [dataset.courses, pickerGrade, pickerQuery, pickerTermScope, profile, selectedPickerCourseIds]);
+  const selectedPickerCourses = pickerCourses.filter((course) => selectedPickerCourseIds.includes(course.id));
+  const unselectedPickerCourses = pickerCourses.filter((course) => !selectedPickerCourseIds.includes(course.id));
+  const pickerGroups: Array<{ category: Course["category"]; label: string; courses: Course[] }> = [
+    { category: "specialized", label: "専門教育科目", courses: unselectedPickerCourses.filter((course) => course.category === "specialized") },
+    { category: "general", label: "総合教育科目", courses: unselectedPickerCourses.filter((course) => course.category === "general") },
+  ];
+
+  useEffect(() => {
+    setPickerGrade(profile.currentGrade);
+  }, [profile.currentGrade]);
 
   function isOfferedThisTerm(course: Course) {
     return course.offerings.some((offering) => canUseOffering(course, offering, profile));
@@ -437,6 +463,17 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
   function toggleCourseIntent(course: Course) {
     if (isOfferedThisTerm(course)) toggleWanted(course);
     else toggleFutureGoal(course);
+  }
+
+  function courseCard(course: Course) {
+    const offeredThisTerm = isOfferedThisTerm(course);
+    return <button key={course.id} className={`course-card ${statusClass(course, profile)} ${course.requirementType} ${profile.wanted[course.id] ?? ""} ${profile.futureGoalCourseIds.includes(course.id) ? "future-goal" : ""}`} onClick={() => toggleCourseIntent(course)} disabled={profile.autoRequiredCourseIds.includes(course.id)}>
+      <span className="course-code">{displayCourseCode(course)}</span>
+      <div className="course-title"><strong>{course.name}</strong><span className={`requirement-badge ${course.requirementType}`}>{labelRequirement(course)}</span></div>
+      <small>{course.credits}単位 / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}{offeredThisTerm ? " / 今期開講" : " / 今期は未開講"}</small>
+      {profile.wanted[course.id] && <em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・自動選択" : profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}
+      {!profile.wanted[course.id] && profile.futureGoalCourseIds.includes(course.id) && <em className="future-goal-label">将来の目標</em>}
+    </button>;
   }
 
   function toggleCompleted(courseId: string) {
@@ -480,8 +517,21 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
     {automaticRequiredCourses.length > 0 && <section className="notice auto-required-notice" role="status"><strong>必修を自動選択・固定しました</strong><p>{automaticRequiredCourses.map((course) => course.name).join("、")}</p></section>}
     <section className="planner-layout">
       <div className="planner-main">
-        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">CURRICULUM TREE</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-required" />必修 <i className="legend-completed" />修得済 <i className="legend-wanted" />今期の希望 <i className="legend-blocked" />前提未達</span></div><p className="compact">今期に開講するカードは「できれば」→「必ず」→解除。今期に開講しないカードは、クリックで「将来の目標」を切り替えます。</p>
-          <div className="tree-grid">{catalogByGrade.map(({ grade, courses }) => <section className="tree-column" key={grade}><h3>{grade}年次</h3>{courses.map((course) => { const offeredThisTerm = isOfferedThisTerm(course); return <button key={course.id} className={`course-card ${statusClass(course, profile)} ${course.requirementType} ${profile.wanted[course.id] ?? ""} ${profile.futureGoalCourseIds.includes(course.id) ? "future-goal" : ""}`} onClick={() => toggleCourseIntent(course)} disabled={profile.autoRequiredCourseIds.includes(course.id)}><span className="course-code">{displayCourseCode(course)}</span><div className="course-title"><strong>{course.name}</strong><span className={`requirement-badge ${course.requirementType}`}>{labelRequirement(course)}</span></div><small>{course.credits}単位 / {course.recommendedTerm === "full_year" ? "通年" : termLabels[course.recommendedTerm]}{offeredThisTerm ? " / 今期開講" : " / 今期は未開講"}</small>{profile.wanted[course.id] && <em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・自動選択" : profile.wanted[course.id] === "must" ? "必ず取りたい" : "できれば取りたい"}</em>}{!profile.wanted[course.id] && profile.futureGoalCourseIds.includes(course.id) && <em className="future-goal-label">将来の目標</em>}</button>; })}</section>)}</div>
+        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COURSE PICKER</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-required" />必修 <i className="legend-completed" />修得済 <i className="legend-wanted" />今期の希望 <i className="legend-blocked" />前提未達</span></div><p className="compact">初期表示は「現在の学年・今期に開講する科目」です。年次・配当学期・科目名で絞り込み、必要な科目群だけ開けます。今期に開講するカードは「できれば」→「必ず」→解除、今期に開講しないカードは「将来の目標」を切り替えます。</p>
+          <section className="course-picker-controls" aria-label="科目一覧の絞り込み">
+            <div className="course-picker-grade-tabs" role="group" aria-label="表示する年次">{[1, 2, 3, 4].map((grade) => <button type="button" key={grade} className={pickerGrade === grade ? "active" : ""} aria-pressed={pickerGrade === grade} onClick={() => setPickerGrade(grade)}>{grade}年次</button>)}</div>
+            <label>配当学期<select value={pickerTermScope} onChange={(event) => setPickerTermScope(event.target.value as CoursePickerTermScope)}><option value="current">今期に開講</option><option value="all">配当学期すべて</option></select></label>
+            <label>科目名・コードで絞り込み<input value={pickerQuery} onChange={(event) => setPickerQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label>
+          </section>
+          <p className="course-picker-count">{pickerGrade}年次・{pickerTermScope === "current" ? "今期に開講" : "配当学期すべて"}の表示対象: <b>{pickerCourses.length}科目</b>{pickerQuery.trim() ? "（検索結果）" : ""}</p>
+          {selectedPickerCourses.length > 0 && <section className="course-picker-selected"><h3>この年次で選択済み・自動選択の科目</h3><div className="course-picker-cards">{selectedPickerCourses.map(courseCard)}</div></section>}
+          <div className="course-picker-groups">{pickerGroups.map((group) => <details key={group.category} className="course-picker-group" open={expandedPickerCategories[group.category]} onToggle={(event) => {
+            const isOpen = event.currentTarget.open;
+            setExpandedPickerCategories((current) => ({ ...current, [group.category]: isOpen }));
+          }}>
+            <summary><span>{group.label}</span><b>{group.courses.length}科目</b><small>{expandedPickerCategories[group.category] ? "閉じる" : "開く"}</small></summary>
+            {group.courses.length > 0 ? <div className="course-picker-cards">{group.courses.map(courseCard)}</div> : <p className="course-picker-empty">この条件に一致する未選択の科目はありません。</p>}
+          </details>)}</div>
         </article>
         <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COMPLETED HISTORY</p><h2>修得済みの科目</h2></div><span className="pill">選択式入力</span></div><p>カタログから科目を選択して修得履歴を入力します。自由入力は使いません。</p><div className="history-list">{dataset.courses.map((course) => <label key={course.id} className="history-item"><input type="checkbox" checked={profile.completedCourseIds.includes(course.id)} onChange={() => toggleCompleted(course.id)} /> <span>{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位</small></label>)}</div>{profile.completedCourseIds.length > 0 && <div className="rechallenge-list"><p><b>再チャレンジ履修</b>（修得済みでも今期にもう一度履修する科目）</p>{profile.completedCourseIds.map((id) => { const course = dataset.courses.find((item) => item.id === id); return course ? <label key={id} className="mini-check"><input type="checkbox" checked={profile.rechallengeCourseIds.includes(id)} onChange={() => toggleRechallenge(id)} /> {course.name}</label> : null; })}</div>}</article>
       </div>
