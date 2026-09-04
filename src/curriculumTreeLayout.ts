@@ -1,0 +1,146 @@
+/**
+ * 2026年度・コンピュータシステム専攻のカリキュラムツリー用レイアウト。
+ *
+ * 座標は、提供されたカリキュラムツリー（教育課程 114–115頁）を基準にした
+ * 1,506 × 1,064 の論理キャンバス上の値。画像を背景にせず、同じ位置に
+ * 操作可能な科目ボタンと接続線を描画するために使う。
+ */
+
+export type TreePageId = "foundation" | "specialization";
+
+export type TreeCoursePlacement = {
+  type: "course";
+  courseId: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+};
+
+/** 元図で複数科目を一つの帯にまとめている箇所。内部の各科目は個別に選択できる。 */
+export type TreeCourseCluster = {
+  type: "cluster";
+  courseIds: string[];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  compact?: boolean;
+};
+
+export type TreePlacement = TreeCoursePlacement | TreeCourseCluster;
+
+export type TreeArea = {
+  title: string;
+  description?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  tone?: "main" | "sub";
+};
+
+export type CurriculumTreePage = {
+  id: TreePageId;
+  title: string;
+  height: number;
+  showTerms?: boolean;
+  areas: TreeArea[];
+  placements: TreePlacement[];
+};
+
+export const kkTreeTerms = [
+  { label: "1年\n前期", x: 355, width: 145 },
+  { label: "1年\n後期", x: 500, width: 145 },
+  { label: "2年\n前期", x: 645, width: 145 },
+  { label: "2年\n後期", x: 790, width: 145 },
+  { label: "3年\n前期", x: 935, width: 145 },
+  { label: "3年\n後期", x: 1080, width: 145 },
+  { label: "4年\n通年", x: 1225, width: 145 },
+] as const;
+
+const course = (courseId: string, x: number, y: number, width = 116, height = 34): TreeCoursePlacement => ({ type: "course", courseId, x, y, width, height });
+const cluster = (courseIds: string[], x: number, y: number, width: number, height: number, compact = false): TreeCourseCluster => ({ type: "cluster", courseIds, x, y, width, height, compact });
+
+/** 114頁: 人間性・キャリア・基礎学力のツリー。 */
+const foundation: CurriculumTreePage = {
+  id: "foundation",
+  title: "学習到達目標・基礎学力",
+  height: 1064,
+  showTerms: true,
+  areas: [
+    { title: "人間性を培う幅広い知識と素養の育成", description: "人間・社会・言語に関する知識を深め、多様な価値観を身につける。", x: 120, y: 203, width: 1250, height: 401 },
+    { title: "人間性の教育・専門性の教育の統合（キャリア教育）", description: "社会的・職業的に自立した学生を育成する。", x: 120, y: 615, width: 1250, height: 172 },
+    { title: "基礎学力・知識の修得", description: "自然科学と情報科学分野に共通する基礎力を身につける。", x: 120, y: 797, width: 1250, height: 177 },
+  ],
+  placements: [
+    course("ait.general.G1829", 370, 213), course("ait.general.G1830", 517, 213),
+    course("ait.general.G1831", 370, 252), course("ait.general.G3834", 517, 252),
+    course("ait.general.G3832", 662, 252), course("ait.general.G3833", 808, 252),
+    course("ait.general.G3845", 662, 291), course("ait.general.G3846", 808, 291),
+    course("ait.general.G3843", 370, 329), course("ait.general.G3844", 517, 329), course("ait.general.G2838", 662, 329),
+    course("ait.general.G3841", 370, 369), course("ait.general.G3842", 517, 369), course("ait.general.G2839", 662, 369),
+    course("ait.general.G3839", 370, 409), course("ait.general.G3840", 517, 409), course("ait.general.G2840", 662, 409),
+    course("ait.general.G2008", 370, 449), course("ait.general.G2009", 517, 449),
+    cluster(["ait.general.G3835", "ait.general.G3836", "ait.general.G3837", "ait.general.G3838"], 370, 488, 260, 34, true),
+    course("ait.general.G2837", 662, 449), course("ait.general.G2835", 808, 449),
+    course("ait.general.G2836", 662, 474), course("ait.general.G2842", 808, 474), course("ait.general.G2834", 662, 499),
+    cluster(["ait.general.G2036", "ait.general.G2001", "ait.general.G2026", "ait.general.G2064", "ait.general.G2065", "ait.general.G2014", "ait.general.G2013", "ait.general.G2066", "ait.general.G2048", "ait.general.G2010", "ait.general.G2821", "ait.general.G2069", "ait.general.G2070"], 370, 529, 990, 34, true),
+    cluster(["ait.general.G2067", "ait.general.G2822"], 370, 569, 990, 34),
+
+    course("ait.kk.K1021", 370, 626), course("ait.general.G2841", 517, 626),
+    course("ait.kk.K2114", 952, 626), course("ait.kk.K2116", 1098, 626),
+    course("ait.kk.K1022", 370, 667), course("ait.kk.K1023", 662, 667), course("ait.kk.K2113", 1098, 667),
+    course("ait.kk.K2115", 1098, 708), cluster(["ait.kk.K2117"], 370, 750, 990, 34),
+
+    course("ait.kk.K1019", 517, 807), course("ait.kk.K2087", 662, 807), course("ait.kk.K1013", 808, 807),
+    course("ait.kk.K2058", 370, 847), course("ait.kk.K2059", 517, 847),
+    course("ait.kk.K1020", 370, 887), course("ait.kk.K2062", 808, 887),
+    course("ait.kk.K2060", 370, 926), course("ait.kk.K2061", 517, 926), course("ait.kk.K2063", 808, 926),
+    course("ait.kk.K1005", 370, 966), course("ait.kk.K2016", 517, 966),
+  ],
+};
+
+/** 115頁: 専門基礎・専門技術のツリー。 */
+const specialization: CurriculumTreePage = {
+  id: "specialization",
+  title: "専門基礎・専門技術",
+  height: 1064,
+  areas: [
+    { title: "専門基礎の修得", description: "ICTの基礎及び専門知識を修得し、柔軟な応用能力を育成する。", x: 120, y: 101, width: 1250, height: 101 },
+    { title: "専門技術・知識の修得", description: "コンピュータシステムについての知識と技術を修得する。", x: 120, y: 215, width: 1250, height: 740 },
+    { title: "(1) システム開発のための専門的な知識と技術", x: 120, y: 245, width: 235, height: 112, tone: "sub" },
+    { title: "(2) ソフトウェア開発のための専門知識と技術", x: 120, y: 358, width: 235, height: 232, tone: "sub" },
+    { title: "(3) ネットワークシステム開発のための専門知識と技術", x: 120, y: 590, width: 235, height: 135, tone: "sub" },
+    { title: "(4) 組み込みシステム開発のための専門知識と技術", x: 120, y: 725, width: 235, height: 95, tone: "sub" },
+    { title: "(5) 高度なICTシステムの研究開発を通して専門知識と技術を実践的に修得する。", x: 120, y: 820, width: 235, height: 135, tone: "sub" },
+  ],
+  placements: [
+    course("ait.kk.K2094", 370, 115), course("ait.kk.K2071", 808, 115), course("ait.kk.K2076", 1098, 115),
+    course("ait.kk.K2090", 808, 157), course("ait.kk.K2119", 952, 157),
+
+    course("ait.kk.K2082", 662, 313),
+    course("ait.kk.K2044", 808, 266), course("ait.kk.K2017", 952, 266), course("ait.kk.K2018", 1098, 266),
+    course("ait.kk.K2012", 952, 313), course("ait.kk.K2014", 1098, 313),
+
+    course("ait.kk.K1017", 370, 415), course("ait.kk.K1003", 370, 458), course("ait.kk.K2022", 517, 458),
+    course("ait.kk.K2049", 662, 376), course("ait.kk.K2077", 1098, 376), course("ait.kk.K2097", 662, 416),
+    course("ait.kk.K2065", 662, 457), course("ait.kk.K2066", 808, 457), course("ait.kk.K2089", 952, 457), course("ait.kk.K2088", 952, 499),
+    course("ait.kk.K2095", 952, 416), course("ait.kk.K2037", 1098, 416), course("ait.kk.K3005", 952, 546),
+
+    course("ait.kk.K1007", 662, 603), course("ait.kk.K2070", 808, 603), course("ait.kk.K2091", 952, 603), course("ait.kk.K3001", 952, 646),
+    course("ait.kk.K2083", 517, 680), course("ait.kk.K3002", 1098, 680),
+
+    course("ait.kk.K2035", 370, 737), course("ait.kk.K2068", 662, 737), course("ait.kk.K2069", 808, 737), course("ait.kk.K1015", 952, 737), course("ait.kk.K3003", 1098, 737),
+    course("ait.kk.K2118", 808, 779), course("ait.kk.K3004", 952, 779),
+
+    course("ait.kk.K3084", 662, 833), course("ait.kk.K2085", 808, 833), course("ait.kk.K1016", 952, 833, 260), course("ait.kk.K1018", 1242, 833),
+    cluster(["ait.kk.K2053"], 370, 874, 990, 34), cluster(["ait.kk.K2054"], 370, 915, 990, 34),
+  ],
+};
+
+export const kkCurriculumTreePages = [foundation, specialization] as const;
+
+export function curriculumTreeCourseIds(page: CurriculumTreePage) {
+  return page.placements.flatMap((placement) => placement.type === "course" ? [placement.courseId] : placement.courseIds);
+}

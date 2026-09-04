@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { loadCurriculumTreeImages } from "./firebase";
+import { curriculumTreeCourseIds, kkCurriculumTreePages, kkTreeTerms, type CurriculumTreePage, type TreeCoursePlacement, type TreePlacement } from "./curriculumTreeLayout";
 import { calculateGraduationPlanProgress, deriveGraduationPlan } from "./planEngine";
 import type { Course, Dataset, GraduationPlan, StudentProfile } from "./types";
 
@@ -66,25 +66,135 @@ function CourseList({
   })}</div>;
 }
 
-/**
- * 資料の読みやすさをそのまま残すため、KKでは元のカリキュラムツリーを横向きで表示する。
- * 選択操作のボタンを図に重ねると線・文字を覆ってしまうため、同じカード内の検索欄に分離する。
- */
+type TreeCourseState = "target" | "required" | "recommended" | "completed" | "default";
+
+function displayTreeCourseName(course: Course) {
+  // 元図の見た目を保つため、科目コードはボタンのラベルには含めない。
+  return course.name;
+}
+
+function treeCourseState(courseId: string, targetCourseIds: string[], requiredCourseIds: string[], recommendedCourseIds: string[], completedCourseIds: string[]): TreeCourseState {
+  if (targetCourseIds.includes(courseId)) return "target";
+  if (requiredCourseIds.includes(courseId)) return "required";
+  if (recommendedCourseIds.includes(courseId)) return "recommended";
+  if (completedCourseIds.includes(courseId)) return "completed";
+  return "default";
+}
+
+function linkPath(source: TreeCoursePlacement, target: TreeCoursePlacement) {
+  const sourceWidth = source.width ?? 116;
+  const targetWidth = target.width ?? 116;
+  const sourceHeight = source.height ?? 34;
+  const targetHeight = target.height ?? 34;
+  const sourceToRight = source.x + sourceWidth / 2 <= target.x + targetWidth / 2;
+  const startX = sourceToRight ? source.x + sourceWidth : source.x;
+  const endX = sourceToRight ? target.x : target.x + targetWidth;
+  const startY = source.y + sourceHeight / 2;
+  const endY = target.y + targetHeight / 2;
+  const middleX = Math.round((startX + endX) / 2);
+  return `M ${startX} ${startY} H ${middleX} V ${endY} H ${endX}`;
+}
+
+function TreeCourseButton({
+  course,
+  placement,
+  state,
+  selected,
+  onToggle,
+  compact = false,
+}: {
+  course: Course;
+  placement?: TreeCoursePlacement;
+  state: TreeCourseState;
+  selected: boolean;
+  onToggle: (courseId: string) => void;
+  compact?: boolean;
+}) {
+  const position = placement ? { left: placement.x, top: placement.y, width: placement.width ?? 116, height: placement.height ?? 34 } : undefined;
+  const stateDescription = state === "target" ? "目標として選択中" : state === "required" ? "目標のために必要" : state === "recommended" ? "取っておいた方がよい" : state === "completed" ? "修得済み" : "未選択";
+  return <button
+    type="button"
+    className={`interactive-tree-course ${compact ? "compact" : ""}`}
+    data-requirement={course.requirementType}
+    data-state={state}
+    style={position}
+    aria-pressed={selected}
+    aria-label={`${courseCode(course)} ${course.name}、${stateDescription}。${selected ? "目標から外す" : "目標に追加"}`}
+    title={`${courseCode(course)} ${course.name}（${stateDescription}）`}
+    onClick={() => onToggle(course.id)}
+  ><span>{displayTreeCourseName(course)}</span>{state !== "default" && <i aria-hidden="true">{state === "target" ? "●" : state === "required" ? "!" : state === "recommended" ? "◌" : "✓"}</i>}</button>;
+}
+
+function InteractiveTreePage({
+  page,
+  courses,
+  targetCourseIds,
+  requiredCourseIds,
+  recommendedCourseIds,
+  completedCourseIds,
+  onToggle,
+}: {
+  page: CurriculumTreePage;
+  courses: Map<string, Course>;
+  targetCourseIds: string[];
+  requiredCourseIds: string[];
+  recommendedCourseIds: string[];
+  completedCourseIds: string[];
+  onToggle: (courseId: string) => void;
+}) {
+  const placementsByCourseId = new Map(page.placements
+    .filter((placement): placement is TreeCoursePlacement => placement.type === "course")
+    .map((placement) => [placement.courseId, placement]));
+  const links = [...courses.values()].flatMap((target) => [
+    ...(target.hardPrerequisites ?? []).map((sourceCourseId) => ({ sourceCourseId, targetCourseId: target.id, type: "hard" as const })),
+    ...(target.softPrerequisites ?? []).map((sourceCourseId) => ({ sourceCourseId, targetCourseId: target.id, type: "soft" as const })),
+  ]).filter((link) => placementsByCourseId.has(link.sourceCourseId) && placementsByCourseId.has(link.targetCourseId));
+
+  function renderPlacement(placement: TreePlacement, index: number) {
+    if (placement.type === "course") {
+      const course = courses.get(placement.courseId);
+      if (!course) return null;
+      return <TreeCourseButton key={placement.courseId} course={course} placement={placement} state={treeCourseState(course.id, targetCourseIds, requiredCourseIds, recommendedCourseIds, completedCourseIds)} selected={targetCourseIds.includes(course.id)} onToggle={onToggle} />;
+    }
+    const items = placement.courseIds.map((courseId) => courses.get(courseId)).filter((course): course is Course => Boolean(course));
+    if (items.length === 0) return null;
+    return <div key={`cluster-${index}`} className={`interactive-tree-cluster ${placement.compact ? "compact" : ""}`} style={{ left: placement.x, top: placement.y, width: placement.width, height: placement.height }}>
+      {items.map((course) => <TreeCourseButton key={course.id} course={course} compact state={treeCourseState(course.id, targetCourseIds, requiredCourseIds, recommendedCourseIds, completedCourseIds)} selected={targetCourseIds.includes(course.id)} onToggle={onToggle} />)}
+    </div>;
+  }
+
+  return <section className="interactive-tree-page" aria-label={`カリキュラムツリー: ${page.title}`}>
+    <h3>{page.title}</h3>
+    <div className="interactive-tree-scroll">
+      <div className="interactive-tree-canvas" style={{ height: page.height }}>
+        {page.showTerms && <div className="interactive-tree-terms" aria-label="標準履修学年・学期">{kkTreeTerms.map((term) => <div key={term.label} style={{ left: term.x, width: term.width }}>{term.label.split("\n").map((line) => <span key={line}>{line}</span>)}</div>)}</div>}
+        {kkTreeTerms.map((term) => <i key={term.label} className="interactive-tree-column" style={{ left: term.x }} aria-hidden="true" />)}
+        {page.areas.map((area) => <section key={`${area.title}-${area.y}`} className={`interactive-tree-area ${area.tone === "sub" ? "sub" : ""}`} style={{ left: area.x, top: area.y, width: area.width, height: area.height }} aria-label={area.title}><div><strong>{area.title}</strong>{area.description && <p>{area.description}</p>}</div></section>)}
+        <svg className="interactive-tree-links" viewBox={`0 0 1506 ${page.height}`} role="presentation" aria-hidden="true"><defs><marker id={`${page.id}-hard-arrow`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" /></marker><marker id={`${page.id}-soft-arrow`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" /></marker></defs>{links.map((link) => <path key={`${link.type}-${link.sourceCourseId}-${link.targetCourseId}`} className={link.type === "hard" ? "hard-link" : "soft-link"} markerEnd={`url(#${page.id}-${link.type}-arrow)`} d={linkPath(placementsByCourseId.get(link.sourceCourseId)!, placementsByCourseId.get(link.targetCourseId)!)} />)}</svg>
+        <div className="interactive-tree-nodes">{page.placements.map(renderPlacement)}</div>
+      </div>
+    </div>
+  </section>;
+}
+
+/** 元図と同じ配置をコードで再構成し、各科目を直接選択できるカリキュラムツリー。 */
 function CurriculumTreeReference({
   dataset,
   profile,
   targetCourseIds,
+  requiredCourseIds,
+  recommendedCourseIds,
   onToggle,
 }: {
   dataset: Dataset;
   profile: StudentProfile;
   targetCourseIds: string[];
+  requiredCourseIds: string[];
+  recommendedCourseIds: string[];
   onToggle: (courseId: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLocaleLowerCase("ja-JP");
-  const [treeImages, setTreeImages] = useState<{ page1: string; page2: string } | null>(null);
-  const [treeImageError, setTreeImageError] = useState(false);
   const matches = useMemo(() => dataset.courses
     .filter((course) => {
       if (!normalizedQuery) return targetCourseIds.includes(course.id);
@@ -92,28 +202,15 @@ function CurriculumTreeReference({
     })
     .sort((a, b) => a.recommendedGrade - b.recommendedGrade || a.code.localeCompare(b.code, "ja"))
     .slice(0, 30), [dataset, normalizedQuery, targetCourseIds]);
+  const courses = useMemo(() => new Map(dataset.courses.map((course) => [course.id, course])), [dataset]);
   const isKkReferenceTree = dataset.program.code === "KK";
-
-  useEffect(() => {
-    let disposed = false;
-    setTreeImages(null);
-    setTreeImageError(false);
-    if (!isKkReferenceTree) return () => { disposed = true; };
-    loadCurriculumTreeImages()
-      .then((images) => {
-        if (!disposed) setTreeImages(images);
-      })
-      .catch(() => {
-        if (!disposed) setTreeImageError(true);
-      });
-    return () => { disposed = true; };
-  }, [dataset.datasetVersionId, isKkReferenceTree]);
+  const displayedCourseIds = useMemo(() => new Set(kkCurriculumTreePages.flatMap(curriculumTreeCourseIds)), []);
 
   return <section className="section-card curriculum-reference-card">
-    <div className="section-heading"><div><p className="eyebrow">ORIGINAL CURRICULUM TREE</p><h2>卒業までのカリキュラムツリー</h2></div><span className="legend"><i className="legend-hard-line" />実線: 前提科目 <i className="legend-soft-line" />破線: 関連・推奨</span></div>
-    <p className="compact">学期ごとの上詰め表示は使わず、元資料と同じ「学習到達目標・専門分野」の行と、科目の位置・線を保って表示します。</p>
-    {treeImages ? <div className="curriculum-reference-pages"><figure><img src={treeImages.page1} alt="コンピュータシステム専攻 カリキュラムツリー（学習到達目標・基礎学力）" /></figure><figure><img src={treeImages.page2} alt="コンピュータシステム専攻 カリキュラムツリー（専門基礎・専門技術）" /></figure></div> : <div className="curriculum-reference-unavailable">{treeImageError ? "元資料ツリーを読み込めませんでした。時間をおいて再読み込みしてください。" : isKkReferenceTree ? "認証済みの元資料ツリーを読み込んでいます…" : "この専攻の元資料ツリーはまだ登録されていません。ツール1で、レイアウト情報を含むカリキュラムツリー資料を登録してください。"}</div>}
-    <section className="tree-course-picker"><div><p className="eyebrow">SELECT TARGET COURSES</p><h3>科目を目標に追加する</h3><p>元図で科目の位置とつながりを確認し、ここから目標科目を選びます。選択状態は下の3区分へすぐ反映されます。</p></div><label>科目名または科目コードで検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label><div className="tree-course-picker-results">{matches.length > 0 ? matches.map((course) => { const selected = targetCourseIds.includes(course.id); return <button key={course.id} className={selected ? "tree-course-choice selected" : "tree-course-choice"} onClick={() => onToggle(course.id)}><span className="course-code">{courseCode(course)}</span><strong>{course.name}</strong><small>{course.recommendedGrade}年{course.recommendedTerm === "full_year" ? "通年" : course.recommendedTerm === "spring" ? "前期" : "後期"} / {requirementLabel(course)}{profile.completedCourseIds.includes(course.id) ? " / 修得済み" : ""}</small><em>{selected ? "目標から外す" : "目標に追加"}</em></button>; }) : <p className="compact">科目名または科目コードを入力して検索してください。</p>}</div></section>
+    <div className="section-heading"><div><p className="eyebrow">INTERACTIVE CURRICULUM TREE</p><h2>卒業までのカリキュラムツリー</h2></div><span className="legend"><i className="legend-hard-line" />実線: 前提科目 <i className="legend-soft-line" />破線: 関連・推奨</span></div>
+    <p className="compact">元資料と同じ学期列・到達目標の行・科目の位置をWeb上で再構成しています。科目の箱を直接クリックして、卒業までの目標へ追加・解除できます。</p>
+    {isKkReferenceTree ? <div className="interactive-tree-pages">{kkCurriculumTreePages.map((page) => <InteractiveTreePage key={page.id} page={page} courses={courses} targetCourseIds={targetCourseIds} requiredCourseIds={requiredCourseIds} recommendedCourseIds={recommendedCourseIds} completedCourseIds={profile.completedCourseIds} onToggle={onToggle} />)}</div> : <div className="curriculum-reference-unavailable">この専攻の操作可能なツリー配置はまだ登録されていません。ツール1で、レイアウト情報を含むカリキュラムツリー資料を登録してください。</div>}
+    <section className="tree-course-picker"><div><p className="eyebrow">SEARCH / ACCESSIBILITY FALLBACK</p><h3>図にない科目を検索して追加する</h3><p>ツリー上に表示されない科目、または科目コードから探したい場合に使えます。ツリーに表示されている科目は、図の箱から直接選択できます。</p></div><label>科目名または科目コードで検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label><div className="tree-course-picker-results">{matches.length > 0 ? matches.map((course) => { const selected = targetCourseIds.includes(course.id); return <button key={course.id} className={selected ? "tree-course-choice selected" : "tree-course-choice"} onClick={() => onToggle(course.id)}><span className="course-code">{courseCode(course)}</span><strong>{course.name}</strong><small>{course.recommendedGrade}年{course.recommendedTerm === "full_year" ? "通年" : course.recommendedTerm === "spring" ? "前期" : "後期"} / {requirementLabel(course)}{profile.completedCourseIds.includes(course.id) ? " / 修得済み" : ""}</small><em>{selected ? "目標から外す" : "目標に追加"}</em></button>; }) : <p className="compact">{normalizedQuery ? "一致する科目がありません。" : displayedCourseIds.size > 0 ? "科目名または科目コードを入力して検索してください。" : "ツリーの科目を読み込めませんでした。"}</p>}</div></section>
   </section>;
 }
 
@@ -162,11 +259,11 @@ export function GraduationPlanner({
   return <section className="graduation-planner">
     <section className="planner-header"><div><p className="eyebrow">TOOL 3 / GRADUATION PLAN</p><h1>卒業までの目標を、科目のつながりから決める。</h1><p>取りたい科目を選ぶと、実線の先修条件と破線の推奨順序を辿り、卒業までに見通したい科目を3つの区分に整理します。保存後、ツール2は今学期に該当する科目を自動選択します。</p></div><div className="planner-actions"><button className="primary-button" disabled={busy || draftPlan.targetCourseIds.length === 0} onClick={() => void save()}>{busy ? "保存中…" : "卒業計画を保存"}</button></div></section>
 
-    <section className="graduation-intro section-card"><div><strong>対象の所属</strong><span>{dataset.program.faculty} / {dataset.program.department} / {dataset.program.name}</span></div><div><strong>保存状態</strong><span>{savedPlan ? `保存済み（${new Date(savedPlan.savedAt).toLocaleString("ja-JP")}）` : "未保存"}</span></div><div><strong>選択方法</strong><span>元図で位置とつながりを確認し、検索欄から目標に追加・解除</span></div></section>
+    <section className="graduation-intro section-card"><div><strong>対象の所属</strong><span>{dataset.program.faculty} / {dataset.program.department} / {dataset.program.name}</span></div><div><strong>保存状態</strong><span>{savedPlan ? `保存済み（${new Date(savedPlan.savedAt).toLocaleString("ja-JP")}）` : "未保存"}</span></div><div><strong>選択方法</strong><span>ツリー上の科目を直接クリックして、目標に追加・解除</span></div></section>
 
     {savedPlanNeedsRefresh && <section className="notice graduation-plan-notice" role="status"><strong>カリキュラムデータが更新されています</strong><p>保存済みの目標科目から、実線・破線の関係を最新データで再計算済みです。「卒業計画を保存」を押すと、ツール2にも最新の結果が反映されます。</p></section>}
 
-    <CurriculumTreeReference dataset={dataset} profile={profile} targetCourseIds={derived.targetCourseIds} onToggle={toggleTarget} />
+    <CurriculumTreeReference dataset={dataset} profile={profile} targetCourseIds={derived.targetCourseIds} requiredCourseIds={derived.requiredCourseIds} recommendedCourseIds={derived.recommendedCourseIds} onToggle={toggleTarget} />
 
     <section className="plan-classification-grid">
       <article className="section-card plan-classification target"><p className="eyebrow">1. TARGET COURSES</p><h2>取りたい・やりたい科目</h2><p>{derived.targetCourseIds.length}科目。あなたが選んだ卒業までの目標です。</p><PlanCourseNames dataset={dataset} ids={derived.targetCourseIds} empty="上の検索欄から科目を選んでください。" /></article>
