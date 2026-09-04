@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { curriculumTreeCourseIdsFromTree, kkCurriculumTree, kkTreePageTwoOffset, kkTreeTerms, type CurriculumTree, type TreeCoursePlacement, type TreePlacement } from "./curriculumTreeLayout";
+import treePage114 from "./assets/kk2026-curriculum-tree-114.png";
+import treePage115 from "./assets/kk2026-curriculum-tree-115.png";
+import { curriculumTreeCourseIdsFromTree, kkCurriculumTree, kkTreePageTwoOffset, type CurriculumTree, type TreeCoursePlacement, type TreePlacement } from "./curriculumTreeLayout";
 import { calculateGraduationPlanProgress, deriveGraduationPlan } from "./planEngine";
 import type { Course, Dataset, GraduationPlan, StudentProfile } from "./types";
 
@@ -128,9 +130,6 @@ function InteractiveCurriculumTree({
   completedCourseIds: string[];
   onToggle: (courseId: string) => void;
 }) {
-  const links = tree.links;
-  const pageTransform = (sourcePage: 114 | 115) => sourcePage === 115 ? `translate(0 ${kkTreePageTwoOffset})` : undefined;
-
   function renderPlacement(placement: TreePlacement, index: number) {
     if (placement.type === "course") {
       const course = courses.get(placement.courseId);
@@ -147,17 +146,11 @@ function InteractiveCurriculumTree({
   return <section className="interactive-tree" aria-label="カリキュラムツリー: 1年から4年まで">
     <div className="interactive-tree-scroll">
       <div className="interactive-tree-canvas" style={{ height: tree.height }}>
-        <header className="interactive-tree-header" aria-label="コンピュータシステム専攻 カリキュラムツリー">
-          <h3>コンピュータシステム専攻　カリキュラムツリー</h3>
-          <div aria-label="科目区分の凡例"><b>必修科目</b><b>選択必修科目</b><b>選択科目</b></div>
-        </header>
-        <div className="interactive-tree-terms" aria-label="標準履修学年・学期">{kkTreeTerms.map((term) => <div key={term.label} style={{ left: term.x, width: term.width }}>{term.label.split("\n").map((line) => <span key={line}>{line}</span>)}</div>)}</div>
-        {kkTreeTerms.map((term) => <i key={term.label} className="interactive-tree-column" style={{ left: term.x }} aria-hidden="true" />)}
-        {tree.areas.map((area) => <section key={`${area.title}-${area.y}`} className={`interactive-tree-area ${area.tone === "sub" ? "sub" : ""}`} style={{ left: area.x, top: area.y, width: area.width, height: area.height }} aria-label={area.title}><div><strong>{area.title}</strong>{area.description && <p>{area.description}</p>}</div></section>)}
-        <svg className="interactive-tree-links" viewBox={`0 0 ${tree.width} ${tree.height}`} role="presentation" aria-hidden="true">
-          {tree.continuationLines.map((line, index) => <path key={`continuation-${line.kind}-${index}`} className={line.kind === "hard" ? "hard-link" : "soft-link"} d={line.path} transform={pageTransform(line.sourcePage)} />)}
-          {links.map((link) => <path key={`${link.kind}-${link.sourceCourseId}-${link.targetCourseId}`} className={link.kind === "hard" ? "hard-link" : "soft-link"} d={link.path} transform={pageTransform(link.sourcePage)} />)}
-        </svg>
+        {/* 線・区分・学期見出しは、元資料のPNGをそのまま背景として表示する。 */}
+        <div className="interactive-tree-reference-images" aria-hidden="true">
+          <img className="interactive-tree-reference-page page-114" src={treePage114} alt="" />
+          <img className="interactive-tree-reference-page page-115" src={treePage115} alt="" />
+        </div>
         <div className="interactive-tree-nodes">{tree.placements.map(renderPlacement)}</div>
       </div>
     </div>
@@ -195,7 +188,7 @@ function CurriculumTreeReference({
 
   return <section className="section-card curriculum-reference-card">
     <div className="section-heading"><div><p className="eyebrow">INTERACTIVE CURRICULUM TREE</p><h2>卒業までのカリキュラムツリー</h2></div><span className="legend"><i className="legend-hard-line" />実線: 前提科目 <i className="legend-soft-line" />破線: 関連・推奨</span></div>
-    <p className="compact">元資料と同じ学期列・到達目標の行・科目の位置をWeb上で再構成しています。科目の箱を直接クリックして、卒業までの目標へ追加・解除できます。</p>
+    <p className="compact">配布資料の画像をそのまま背景に表示しています。科目の枠を直接クリックして、卒業までの目標へ追加・解除できます。</p>
     {isKkReferenceTree ? <InteractiveCurriculumTree tree={kkCurriculumTree} courses={courses} targetCourseIds={targetCourseIds} requiredCourseIds={requiredCourseIds} recommendedCourseIds={recommendedCourseIds} completedCourseIds={profile.completedCourseIds} onToggle={onToggle} /> : <div className="curriculum-reference-unavailable">この専攻の操作可能なツリー配置はまだ登録されていません。ツール1で、レイアウト情報を含むカリキュラムツリー資料を登録してください。</div>}
     <section className="tree-course-picker"><div><p className="eyebrow">SEARCH / ACCESSIBILITY FALLBACK</p><h3>図にない科目を検索して追加する</h3><p>ツリー上に表示されない科目、または科目コードから探したい場合に使えます。ツリーに表示されている科目は、図の箱から直接選択できます。</p></div><label>科目名または科目コードで検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label><div className="tree-course-picker-results">{matches.length > 0 ? matches.map((course) => { const selected = targetCourseIds.includes(course.id); return <button key={course.id} className={selected ? "tree-course-choice selected" : "tree-course-choice"} onClick={() => onToggle(course.id)}><span className="course-code">{courseCode(course)}</span><strong>{course.name}</strong><small>{course.recommendedGrade}年{course.recommendedTerm === "full_year" ? "通年" : course.recommendedTerm === "spring" ? "前期" : "後期"} / {requirementLabel(course)}{profile.completedCourseIds.includes(course.id) ? " / 修得済み" : ""}</small><em>{selected ? "目標から外す" : "目標に追加"}</em></button>; }) : <p className="compact">{normalizedQuery ? "一致する科目がありません。" : displayedCourseIds.size > 0 ? "科目名または科目コードを入力して検索してください。" : "ツリーの科目を読み込めませんでした。"}</p>}</div></section>
   </section>;
