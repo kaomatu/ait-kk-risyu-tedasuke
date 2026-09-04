@@ -178,7 +178,9 @@ export function curriculumTreeCourseIds(page: CurriculumTreePage) {
   return page.placements.flatMap((placement) => placement.type === "course" ? [placement.courseId] : placement.courseIds);
 }
 
-const pageTwoOffset = foundation.height;
+// PDFの上下余白だけを詰める。114頁の図の末端（約974px）と115頁の図の
+// 先頭（約101px）が連続するため、科目の相対座標・学期列の縮尺は変えない。
+const pageTwoOffset = 944;
 
 function offsetArea(area: TreeArea, offset: number): TreeArea {
   return { ...area, y: area.y + offset };
@@ -190,8 +192,7 @@ function offsetPlacement(placement: TreePlacement, offset: number): TreePlacemen
 
 /**
  * 114–115頁を、紙の切れ目で分割しない一枚の論理キャンバスにしたレイアウト。
- * 2頁目は元資料の座標をそのまま 1,064px 下へ移しているため、同じ縮尺で
- * 連続して確認できる。
+ * 2頁目は紙面の余白のみを除いて下へ移し、同じ縮尺で連続して確認できる。
  */
 export const kk2026TreeCourseLinks: TreeCourseLink[] = [
   // 114頁: 言語・キャリア・基礎学力
@@ -253,18 +254,18 @@ export const kk2026TreeCourseLinks: TreeCourseLink[] = [
  */
 const kk2026TreeContinuationLines: TreeContinuationLine[] = [
   // 114頁の「線形代数Ⅱ／情報数学Ⅱ」側から、115頁の数理系へ続く実線。
-  { kind: "hard", path: "M 640 943 V 1064 V 1347 H 808" },
-  { kind: "hard", path: "M 640 983 V 1064 V 1394 H 662" },
+  { kind: "hard", path: "M 640 943 V 1227 H 808" },
+  { kind: "hard", path: "M 640 983 V 1274 H 662" },
   // 114頁の物理系から下へ伸び、115頁中央の縦幹へ続く実線。
-  { kind: "hard", path: "M 784 824 V 1064 V 1855" },
+  { kind: "hard", path: "M 784 824 V 1735" },
   // 114頁のデータサイエンス基礎処理側から続く破線。
-  { kind: "soft", path: "M 799 904 V 1064 V 1298 H 938 V 1347 H 952" },
+  { kind: "soft", path: "M 799 904 V 1178 H 938 V 1227 H 952" },
 ];
 
 export const kkCurriculumTree: CurriculumTree = {
   id: "kk-2026-combined",
   width: 1506,
-  height: foundation.height + specialization.height,
+  height: pageTwoOffset + specialization.height,
   areas: [...foundation.areas, ...specialization.areas.map((area) => offsetArea(area, pageTwoOffset))],
   placements: [...foundation.placements, ...specialization.placements.map((placement) => offsetPlacement(placement, pageTwoOffset))],
   links: kk2026TreeCourseLinks,

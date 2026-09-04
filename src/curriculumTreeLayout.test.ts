@@ -13,9 +13,9 @@ describe("KK interactive curriculum tree layout", () => {
   });
 
   it("uses one continuous canvas for pages 114–115", () => {
-    expect(kkCurriculumTree.height).toBe(2128);
-    expect(kkCurriculumTree.areas.some((area) => area.y < 1064)).toBe(true);
-    expect(kkCurriculumTree.areas.some((area) => area.y >= 1064)).toBe(true);
+    expect(kkCurriculumTree.height).toBe(2008);
+    expect(kkCurriculumTree.areas.some((area) => area.y < 944)).toBe(true);
+    expect(kkCurriculumTree.areas.some((area) => area.y >= 944)).toBe(true);
     expect(kkCurriculumTree.continuationLines).toHaveLength(4);
   });
 
