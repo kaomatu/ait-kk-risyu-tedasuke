@@ -45,9 +45,9 @@ export const kkSeedCourses: SeedCourse[] = createKk2026Courses();
 
 export function createKkSeedDataset() {
   return {
-    datasetVersionId: "ait-is-kk-entry2026-offering2026-v4-tree-dotted-relationships",
+    datasetVersionId: "ait-is-kk-entry2026-offering2026-v5-tree-solid-dotted-audited",
     status: "published",
-    sourceStatus: "attached_sources_reconciled_requirement_types_and_tree_dotted_relationships_reviewed",
+    sourceStatus: "attached_sources_reconciled_requirement_types_and_tree_solid_and_dotted_relationships_audited",
     program: {
       faculty: "情報科学部",
       department: "情報科学科",

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { curriculumTreeCourseIds, kkCurriculumTreePages, kkTreeTerms, type CurriculumTreePage, type TreeCoursePlacement, type TreePlacement } from "./curriculumTreeLayout";
+import { curriculumTreeCourseIdsFromTree, kkCurriculumTree, kkTreeTerms, type CurriculumTree, type TreeCoursePlacement, type TreePlacement } from "./curriculumTreeLayout";
 import { calculateGraduationPlanProgress, deriveGraduationPlan } from "./planEngine";
 import type { Course, Dataset, GraduationPlan, StudentProfile } from "./types";
 
@@ -125,8 +125,8 @@ function TreeCourseButton({
   ><span>{displayTreeCourseName(course)}</span>{state !== "default" && <i aria-hidden="true">{state === "target" ? "●" : state === "required" ? "!" : state === "recommended" ? "◌" : "✓"}</i>}</button>;
 }
 
-function InteractiveTreePage({
-  page,
+function InteractiveCurriculumTree({
+  tree,
   courses,
   targetCourseIds,
   requiredCourseIds,
@@ -134,7 +134,7 @@ function InteractiveTreePage({
   completedCourseIds,
   onToggle,
 }: {
-  page: CurriculumTreePage;
+  tree: CurriculumTree;
   courses: Map<string, Course>;
   targetCourseIds: string[];
   requiredCourseIds: string[];
@@ -142,13 +142,10 @@ function InteractiveTreePage({
   completedCourseIds: string[];
   onToggle: (courseId: string) => void;
 }) {
-  const placementsByCourseId = new Map(page.placements
+  const placementsByCourseId = new Map(tree.placements
     .filter((placement): placement is TreeCoursePlacement => placement.type === "course")
     .map((placement) => [placement.courseId, placement]));
-  const links = [...courses.values()].flatMap((target) => [
-    ...(target.hardPrerequisites ?? []).map((sourceCourseId) => ({ sourceCourseId, targetCourseId: target.id, type: "hard" as const })),
-    ...(target.softPrerequisites ?? []).map((sourceCourseId) => ({ sourceCourseId, targetCourseId: target.id, type: "soft" as const })),
-  ]).filter((link) => placementsByCourseId.has(link.sourceCourseId) && placementsByCourseId.has(link.targetCourseId));
+  const links = tree.links.filter((link) => placementsByCourseId.has(link.sourceCourseId) && placementsByCourseId.has(link.targetCourseId));
 
   function renderPlacement(placement: TreePlacement, index: number) {
     if (placement.type === "course") {
@@ -163,15 +160,14 @@ function InteractiveTreePage({
     </div>;
   }
 
-  return <section className="interactive-tree-page" aria-label={`カリキュラムツリー: ${page.title}`}>
-    <h3>{page.title}</h3>
+  return <section className="interactive-tree" aria-label="カリキュラムツリー: 1年から4年まで">
     <div className="interactive-tree-scroll">
-      <div className="interactive-tree-canvas" style={{ height: page.height }}>
-        {page.showTerms && <div className="interactive-tree-terms" aria-label="標準履修学年・学期">{kkTreeTerms.map((term) => <div key={term.label} style={{ left: term.x, width: term.width }}>{term.label.split("\n").map((line) => <span key={line}>{line}</span>)}</div>)}</div>}
+      <div className="interactive-tree-canvas" style={{ height: tree.height }}>
+        <div className="interactive-tree-terms" aria-label="標準履修学年・学期">{kkTreeTerms.map((term) => <div key={term.label} style={{ left: term.x, width: term.width }}>{term.label.split("\n").map((line) => <span key={line}>{line}</span>)}</div>)}</div>
         {kkTreeTerms.map((term) => <i key={term.label} className="interactive-tree-column" style={{ left: term.x }} aria-hidden="true" />)}
-        {page.areas.map((area) => <section key={`${area.title}-${area.y}`} className={`interactive-tree-area ${area.tone === "sub" ? "sub" : ""}`} style={{ left: area.x, top: area.y, width: area.width, height: area.height }} aria-label={area.title}><div><strong>{area.title}</strong>{area.description && <p>{area.description}</p>}</div></section>)}
-        <svg className="interactive-tree-links" viewBox={`0 0 1506 ${page.height}`} role="presentation" aria-hidden="true"><defs><marker id={`${page.id}-hard-arrow`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" /></marker><marker id={`${page.id}-soft-arrow`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" /></marker></defs>{links.map((link) => <path key={`${link.type}-${link.sourceCourseId}-${link.targetCourseId}`} className={link.type === "hard" ? "hard-link" : "soft-link"} markerEnd={`url(#${page.id}-${link.type}-arrow)`} d={linkPath(placementsByCourseId.get(link.sourceCourseId)!, placementsByCourseId.get(link.targetCourseId)!)} />)}</svg>
-        <div className="interactive-tree-nodes">{page.placements.map(renderPlacement)}</div>
+        {tree.areas.map((area) => <section key={`${area.title}-${area.y}`} className={`interactive-tree-area ${area.tone === "sub" ? "sub" : ""}`} style={{ left: area.x, top: area.y, width: area.width, height: area.height }} aria-label={area.title}><div><strong>{area.title}</strong>{area.description && <p>{area.description}</p>}</div></section>)}
+        <svg className="interactive-tree-links" viewBox={`0 0 ${tree.width} ${tree.height}`} role="presentation" aria-hidden="true">{tree.continuationLines.map((line, index) => <path key={`continuation-${line.kind}-${index}`} className={line.kind === "hard" ? "hard-link" : "soft-link"} d={line.path} />)}{links.map((link) => <path key={`${link.kind}-${link.sourceCourseId}-${link.targetCourseId}`} className={link.kind === "hard" ? "hard-link" : "soft-link"} d={linkPath(placementsByCourseId.get(link.sourceCourseId)!, placementsByCourseId.get(link.targetCourseId)!)} />)}</svg>
+        <div className="interactive-tree-nodes">{tree.placements.map(renderPlacement)}</div>
       </div>
     </div>
   </section>;
@@ -204,12 +200,12 @@ function CurriculumTreeReference({
     .slice(0, 30), [dataset, normalizedQuery, targetCourseIds]);
   const courses = useMemo(() => new Map(dataset.courses.map((course) => [course.id, course])), [dataset]);
   const isKkReferenceTree = dataset.program.code === "KK";
-  const displayedCourseIds = useMemo(() => new Set(kkCurriculumTreePages.flatMap(curriculumTreeCourseIds)), []);
+  const displayedCourseIds = useMemo(() => new Set(curriculumTreeCourseIdsFromTree(kkCurriculumTree)), []);
 
   return <section className="section-card curriculum-reference-card">
     <div className="section-heading"><div><p className="eyebrow">INTERACTIVE CURRICULUM TREE</p><h2>卒業までのカリキュラムツリー</h2></div><span className="legend"><i className="legend-hard-line" />実線: 前提科目 <i className="legend-soft-line" />破線: 関連・推奨</span></div>
     <p className="compact">元資料と同じ学期列・到達目標の行・科目の位置をWeb上で再構成しています。科目の箱を直接クリックして、卒業までの目標へ追加・解除できます。</p>
-    {isKkReferenceTree ? <div className="interactive-tree-pages">{kkCurriculumTreePages.map((page) => <InteractiveTreePage key={page.id} page={page} courses={courses} targetCourseIds={targetCourseIds} requiredCourseIds={requiredCourseIds} recommendedCourseIds={recommendedCourseIds} completedCourseIds={profile.completedCourseIds} onToggle={onToggle} />)}</div> : <div className="curriculum-reference-unavailable">この専攻の操作可能なツリー配置はまだ登録されていません。ツール1で、レイアウト情報を含むカリキュラムツリー資料を登録してください。</div>}
+    {isKkReferenceTree ? <InteractiveCurriculumTree tree={kkCurriculumTree} courses={courses} targetCourseIds={targetCourseIds} requiredCourseIds={requiredCourseIds} recommendedCourseIds={recommendedCourseIds} completedCourseIds={profile.completedCourseIds} onToggle={onToggle} /> : <div className="curriculum-reference-unavailable">この専攻の操作可能なツリー配置はまだ登録されていません。ツール1で、レイアウト情報を含むカリキュラムツリー資料を登録してください。</div>}
     <section className="tree-course-picker"><div><p className="eyebrow">SEARCH / ACCESSIBILITY FALLBACK</p><h3>図にない科目を検索して追加する</h3><p>ツリー上に表示されない科目、または科目コードから探したい場合に使えます。ツリーに表示されている科目は、図の箱から直接選択できます。</p></div><label>科目名または科目コードで検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label><div className="tree-course-picker-results">{matches.length > 0 ? matches.map((course) => { const selected = targetCourseIds.includes(course.id); return <button key={course.id} className={selected ? "tree-course-choice selected" : "tree-course-choice"} onClick={() => onToggle(course.id)}><span className="course-code">{courseCode(course)}</span><strong>{course.name}</strong><small>{course.recommendedGrade}年{course.recommendedTerm === "full_year" ? "通年" : course.recommendedTerm === "spring" ? "前期" : "後期"} / {requirementLabel(course)}{profile.completedCourseIds.includes(course.id) ? " / 修得済み" : ""}</small><em>{selected ? "目標から外す" : "目標に追加"}</em></button>; }) : <p className="compact">{normalizedQuery ? "一致する科目がありません。" : displayedCourseIds.size > 0 ? "科目名または科目コードを入力して検索してください。" : "ツリーの科目を読み込めませんでした。"}</p>}</div></section>
   </section>;
 }
