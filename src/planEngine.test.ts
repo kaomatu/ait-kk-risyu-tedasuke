@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mockCatalog } from "./mockCatalog";
-import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, creditsCountedForCurrentTerm, generatePlan, prerequisitePriorities, recommendCourses, requiredScheduleSlots } from "./planEngine";
+import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateGraduationPlanProgress, calculateProgress, creditsCountedForCurrentTerm, deriveGraduationPlan, generatePlan, prerequisitePriorities, recommendCourses, requiredScheduleSlots } from "./planEngine";
 import type { Course, Dataset, StudentProfile } from "./types";
 
 function profile(overrides: Partial<StudentProfile> = {}): StudentProfile {
@@ -14,6 +14,7 @@ function profile(overrides: Partial<StudentProfile> = {}): StudentProfile {
     futureGoalCourseIds: [],
     targetTermCredits: null,
     autoRequiredCourseIds: [],
+    autoGraduationPlanWanted: {},
     rechallengeCourseIds: [],
     lotteryStates: {},
     hardBlockedSlots: [],
@@ -265,5 +266,66 @@ describe("履修計画エンジン", () => {
 
     expect(result.selected).toHaveLength(0);
     expect(result.rejected[0]?.reasons.join(" ")).toContain("後期から新規登録はできません");
+  });
+
+  it("卒業計画は目標から実線の必要科目と破線の推奨科目を区別して再帰的に求める", () => {
+    const foundation: Course = {
+      id: "foundation", code: "F", name: "基礎", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", offerings: [],
+    };
+    const preparation: Course = {
+      id: "preparation", code: "P", name: "推奨の基礎", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", offerings: [],
+    };
+    const intermediate: Course = {
+      id: "intermediate", code: "I", name: "中間", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 2, recommendedTerm: "spring", hardPrerequisites: [foundation.id], softPrerequisites: [preparation.id], offerings: [],
+    };
+    const target: Course = {
+      id: "target", code: "T", name: "目標", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 3, recommendedTerm: "spring", hardPrerequisites: [intermediate.id], offerings: [],
+    };
+    const derived = deriveGraduationPlan({ ...mockCatalog, courses: [foundation, preparation, intermediate, target] }, [target.id]);
+
+    expect(derived.targetCourseIds).toEqual([target.id]);
+    expect(derived.requiredCourseIds).toEqual([foundation.id, intermediate.id]);
+    expect(derived.recommendedCourseIds).toEqual([preparation.id]);
+  });
+
+  it("保存済み卒業計画から、今学期に登録可能な必要・目標科目だけを自動選択する", () => {
+    const requiredNow: Course = {
+      id: "required-now", code: "RN", name: "必要な先修", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", offerings: [{ id: "rn", term: "spring", classCode: "A", weekday: "mon", periods: [1], lottery: false }],
+    };
+    const futureTarget: Course = {
+      id: "future-target", code: "FT", name: "後の目標", credits: 2, category: "specialized", requirementType: "elective", recommendedGrade: 2, recommendedTerm: "spring", hardPrerequisites: [requiredNow.id], offerings: [{ id: "ft", term: "spring", classCode: "A", weekday: "tue", periods: [1], lottery: false }],
+    };
+    const recommendedNow: Course = {
+      id: "recommended-now", code: "RC", name: "推奨科目", credits: 2, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", offerings: [{ id: "rc", term: "spring", classCode: "A", weekday: "wed", periods: [1], lottery: false }],
+    };
+    const dataset = { ...mockCatalog, courses: [requiredNow, futureTarget, recommendedNow] };
+    const graduationPlan = {
+      schemaVersion: 1 as const,
+      datasetVersionId: dataset.datasetVersionId,
+      programCode: dataset.program.code,
+      targetCourseIds: [futureTarget.id],
+      requiredCourseIds: [requiredNow.id],
+      recommendedCourseIds: [recommendedNow.id],
+      savedAt: "2026-04-01T00:00:00.000Z",
+    };
+
+    expect(autoGraduationPlanWanted(dataset, profile(), graduationPlan)).toEqual({ [requiredNow.id]: "must", [recommendedNow.id]: "prefer" });
+  });
+
+  it("卒業計画の進捗は修得済みと計画内の科目を重複せずに合算する", () => {
+    const completed: Course = {
+      id: "completed", code: "C", name: "修得済み", credits: 2, category: "specialized", requirementType: "required", recommendedGrade: 1, recommendedTerm: "spring", offerings: [],
+    };
+    const planned: Course = {
+      id: "planned", code: "P", name: "計画中", credits: 3, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", offerings: [],
+    };
+    const dataset = { ...mockCatalog, courses: [completed, planned] };
+    const progress = calculateGraduationPlanProgress(dataset, profile({ completedCourseIds: [completed.id] }), {
+      targetCourseIds: [completed.id, planned.id], requiredCourseIds: [], recommendedCourseIds: [],
+    });
+
+    expect(progress.specializedTotal).toBe(2);
+    expect(progress.generalTotal).toBe(3);
+    expect(progress.graduationTotal).toBe(5);
   });
 });

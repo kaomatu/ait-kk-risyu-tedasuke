@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadProfileSnapshot, loginWithPassphrase, logout, saveProfileSnapshot, subscribeToAuth } from "./firebase";
-import { activeAnnualCap, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
-import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
+import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loginWithPassphrase, logout, saveGraduationPlan, saveProfileSnapshot, subscribeToAuth } from "./firebase";
+import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
+import { GraduationPlanner } from "./GraduationPlanner";
+import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type GraduationPlan, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
 import "./styles.css";
 
-type Tab = "overview" | "ingestion" | "planner" | "rules";
+type Tab = "overview" | "ingestion" | "graduation_planner" | "planner" | "rules";
 const weekdays: Weekday[] = ["mon", "tue", "wed", "thu", "fri"];
 const periods = [1, 2, 3, 4, 5, 6];
 
@@ -19,6 +20,7 @@ function defaultProfile(): StudentProfile {
     futureGoalCourseIds: [],
     targetTermCredits: null,
     autoRequiredCourseIds: [],
+    autoGraduationPlanWanted: {},
     rechallengeCourseIds: [],
     lotteryStates: {},
     hardBlockedSlots: [],
@@ -60,6 +62,8 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [profile, setProfile] = useState<StudentProfile>(defaultProfile);
   const [plan, setPlan] = useState<PlanResult | null>(null);
+  const [graduationPlan, setGraduationPlan] = useState<GraduationPlan | null>(null);
+  const [graduationPlanBusy, setGraduationPlanBusy] = useState(false);
   const [snapshots, setSnapshots] = useState<ProfileSnapshotSummary[]>([]);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
 
@@ -73,6 +77,7 @@ export default function App() {
       setDataset(null);
       setSnapshots([]);
       setProfile(defaultProfile());
+      setGraduationPlan(null);
       return;
     }
     setLoadingDataset(true);
@@ -83,6 +88,9 @@ export default function App() {
     listProfileSnapshots()
       .then(setSnapshots)
       .catch(() => setMessage("保存済みの履修計画一覧を読み込めませんでした。新しい計画として続けられます。"));
+    loadGraduationPlan()
+      .then(setGraduationPlan)
+      .catch(() => setMessage("卒業計画を読み込めませんでした。新しい計画として続けられます。"));
   }, [hasAccess]);
 
   const planProgress = useMemo(() => dataset ? calculateProgress(dataset, profile, plan) : null, [dataset, profile, plan]);
@@ -94,11 +102,19 @@ export default function App() {
       const desired = new Set(requiredIds);
       const wanted = { ...current.wanted };
       const previousAutoIds = current.autoRequiredCourseIds;
+      const longTermWanted = autoGraduationPlanWanted(dataset, current, graduationPlan);
+      const previousLongTermWanted = current.autoGraduationPlanWanted ?? {};
       for (const id of previousAutoIds) {
         if (!desired.has(id) && wanted[id] === "must") delete wanted[id];
       }
+      for (const [id, priority] of Object.entries(previousLongTermWanted)) {
+        if (!longTermWanted[id] && !desired.has(id) && wanted[id] === priority) delete wanted[id];
+      }
       const newAutoIds = requiredIds.filter((id) => !previousAutoIds.includes(id));
       for (const id of newAutoIds) wanted[id] = "must";
+      for (const [id, priority] of Object.entries(longTermWanted)) {
+        if (!wanted[id] || priority === "must") wanted[id] = priority;
+      }
       const nextAutoIds = [
         ...previousAutoIds.filter((id) => desired.has(id) && wanted[id] === "must"),
         ...newAutoIds,
@@ -108,14 +124,16 @@ export default function App() {
       const softBlockedSlots = current.softBlockedSlots.filter((slot) => !requiredSlots.includes(slot));
       const unchanged = nextAutoIds.length === previousAutoIds.length
         && nextAutoIds.every((id, index) => id === previousAutoIds[index])
+        && Object.keys(longTermWanted).length === Object.keys(previousLongTermWanted).length
+        && Object.entries(longTermWanted).every(([id, priority]) => previousLongTermWanted[id] === priority)
         && Object.keys(wanted).length === Object.keys(current.wanted).length
         && Object.entries(wanted).every(([id, priority]) => current.wanted[id] === priority)
         && hardBlockedSlots.length === current.hardBlockedSlots.length
         && softBlockedSlots.length === current.softBlockedSlots.length;
-      return unchanged ? current : { ...current, wanted, autoRequiredCourseIds: nextAutoIds, hardBlockedSlots, softBlockedSlots };
+      return unchanged ? current : { ...current, wanted, autoRequiredCourseIds: nextAutoIds, autoGraduationPlanWanted: longTermWanted, hardBlockedSlots, softBlockedSlots };
     });
     setPlan(null);
-  }, [dataset, profile.currentGrade, profile.term, profile.completedCourseIds]);
+  }, [dataset, graduationPlan, profile.currentGrade, profile.term, profile.completedCourseIds]);
 
   function patchProfile(patch: Partial<StudentProfile>) {
     setProfile((current) => ({ ...current, ...patch }));
@@ -167,6 +185,20 @@ export default function App() {
     }
   }
 
+  async function saveCurrentGraduationPlan(nextPlan: GraduationPlan) {
+    setGraduationPlanBusy(true);
+    try {
+      const saved = await saveGraduationPlan(nextPlan);
+      setGraduationPlan(saved);
+      setMessage("卒業までの科目計画を保存しました。ツール2では今学期に該当する科目を自動選択します。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "卒業計画を保存できませんでした。");
+      throw error;
+    } finally {
+      setGraduationPlanBusy(false);
+    }
+  }
+
   if (!userReady) return <main className="loading-screen">接続を確認しています…</main>;
   if (!hasAccess) return <AccessGate localPreview={localPreview} onLocalAccess={() => setHasAccess(true)} />;
 
@@ -184,6 +216,7 @@ export default function App() {
       <nav className="tabs" aria-label="主な画面">
         <TabButton current={tab} target="overview" onClick={setTab}>概要</TabButton>
         <TabButton current={tab} target="ingestion" onClick={setTab}>ツール1: DB生成</TabButton>
+        <TabButton current={tab} target="graduation_planner" onClick={setTab}>ツール3: 卒業計画</TabButton>
         <TabButton current={tab} target="planner" onClick={setTab}>ツール2: 履修計画</TabButton>
         <TabButton current={tab} target="rules" onClick={setTab}>要件・ルール</TabButton>
       </nav>
@@ -195,7 +228,8 @@ export default function App() {
         {!loadingDataset && !dataset && !localPreview && <DatasetSetup onSeed={seedDataset} />}
         {dataset && tab === "overview" && <Overview dataset={dataset} profile={profile} progress={planProgress} onOpenPlanner={() => setTab("planner")} />}
         {dataset && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} />}
-        {dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} snapshots={snapshots} snapshotBusy={snapshotBusy} onSaveSnapshot={saveNumberedProfile} onLoadSnapshot={loadNumberedProfile} />}
+        {dataset && tab === "graduation_planner" && <GraduationPlanner dataset={dataset} profile={profile} savedPlan={graduationPlan} busy={graduationPlanBusy} onSave={saveCurrentGraduationPlan} />}
+        {dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} graduationPlan={graduationPlan} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} snapshots={snapshots} snapshotBusy={snapshotBusy} onSaveSnapshot={saveNumberedProfile} onLoadSnapshot={loadNumberedProfile} />}
         {dataset && tab === "rules" && <Rules dataset={dataset} />}
       </section>
     </main>
@@ -351,7 +385,7 @@ function IngestionTool({ localPreview, onMessage }: { localPreview: boolean; onM
   </>;
 }
 
-function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, snapshots, snapshotBusy, onSaveSnapshot, onLoadSnapshot }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult | null; progress: ReturnType<typeof calculateProgress> | null; patchProfile: (patch: Partial<StudentProfile>) => void; onGenerate: () => void; snapshots: ProfileSnapshotSummary[]; snapshotBusy: boolean; onSaveSnapshot: () => Promise<ProfileSnapshotSummary>; onLoadSnapshot: (snapshotNo: number) => Promise<void> }) {
+function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfile, onGenerate, snapshots, snapshotBusy, onSaveSnapshot, onLoadSnapshot }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult | null; progress: ReturnType<typeof calculateProgress> | null; graduationPlan: GraduationPlan | null; patchProfile: (patch: Partial<StudentProfile>) => void; onGenerate: () => void; snapshots: ProfileSnapshotSummary[]; snapshotBusy: boolean; onSaveSnapshot: () => Promise<ProfileSnapshotSummary>; onLoadSnapshot: (snapshotNo: number) => Promise<void> }) {
   const catalogByGrade = [1, 2, 3, 4].map((grade) => ({ grade, courses: dataset.courses.filter((course) => course.recommendedGrade === grade) }));
   const termCourses = dataset.courses.filter((course) => course.offerings.some((offering) => (
     canUseOffering(course, offering, profile)
@@ -364,6 +398,9 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, s
   const automaticRequiredCourses = profile.autoRequiredCourseIds
     .map((id) => dataset.courses.find((course) => course.id === id))
     .filter((course): course is Course => Boolean(course));
+  const automaticGraduationPlanCourses = Object.entries(profile.autoGraduationPlanWanted ?? {})
+    .map(([id, priority]) => ({ course: dataset.courses.find((course) => course.id === id), priority }))
+    .filter((item): item is { course: Course; priority: "must" | "prefer" } => Boolean(item.course));
   const protectedRequiredSlots = useMemo(() => requiredScheduleSlots(dataset, profile), [dataset, profile]);
   const recommendations = useMemo(() => plan ? recommendCourses(dataset, profile, plan) : [], [dataset, profile, plan]);
 
@@ -422,8 +459,9 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, s
   }
 
   return <>
-    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / PLANNER</p><h1>履修の希望と、要件をひとつに。</h1><p>未修得の必修を先に固定し、今期の希望・先修条件・空き希望の順で履修案を組みます。今期に開講しないカードは、将来の目標として選択できます。</p></div><div className="planner-actions"><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
+    <section className="planner-header"><div><p className="eyebrow">TOOL 2 / TERM PLANNER</p><h1>今学期の履修を、卒業計画から組み立てる。</h1><p>ツール3の保存済み計画から今期に履修可能な科目と、未修得の必修を自動選択します。残りは希望・先修条件・空き希望をもとに自由に調整できます。</p></div><div className="planner-actions"><button className="primary-button" onClick={onGenerate}>履修案を生成する</button></div></section>
     <section className="profile-strip section-card">
+      <label>対象の所属<select disabled value={dataset.program.code}><option value={dataset.program.code}>{dataset.program.faculty} / {dataset.program.name}</option></select><small>現在はこの専攻用データベースのみを登録しています。</small></label>
       <label>現在の学年<select value={profile.currentGrade} onChange={(event) => patchProfile({ currentGrade: Number(event.target.value) })}>{[1, 2, 3, 4].map((grade) => <option value={grade} key={grade}>{grade}年次</option>)}</select></label>
       <label>現在の学期<select value={profile.term} onChange={(event) => patchProfile({ term: event.target.value as StudentProfile["term"] })}><option value="spring">前期</option><option value="fall">後期</option></select></label>
       <label>通算GPA<input type="number" step="0.01" min="0" max="4" placeholder="不明なら空欄" value={profile.gpa ?? ""} onChange={(event) => patchProfile({ gpa: event.target.value === "" ? null : Number(event.target.value) })} /><small>進級判定の目安用。現在の入力だけで上限は変わりません。</small></label>
@@ -431,6 +469,7 @@ function Planner({ dataset, profile, plan, progress, patchProfile, onGenerate, s
       <label>今期に取りたい単位数<input type="number" min="0" max={dataset.policies.termCap} placeholder="任意" value={profile.targetTermCredits ?? ""} onChange={(event) => patchProfile({ targetTermCredits: event.target.value === "" ? null : Number(event.target.value) })} /><small>不足時は候補のみ表示し、自動追加はしません。</small></label>
       <label className="check-label"><input type="checkbox" checked={profile.annualCapBonusLocked} onChange={(event) => patchProfile({ annualCapBonusLocked: event.target.checked })} /> 進級時の判定で年間52単位の優遇を取得済み</label>
     </section>
+    {graduationPlan && <section className="notice graduation-plan-notice" role="status"><strong>ツール3の卒業計画を連携中です</strong><p>目標 {graduationPlan.targetCourseIds.length}科目、必要な先修 {graduationPlan.requiredCourseIds.length}科目、推奨 {graduationPlan.recommendedCourseIds.length}科目を保存済みです。今期に履修可能な {automaticGraduationPlanCourses.length} 科目を自動選択しました。</p>{automaticGraduationPlanCourses.length > 0 && <ul>{automaticGraduationPlanCourses.map(({ course, priority }) => <li key={course.id}>{course.name}（{priority === "must" ? "卒業計画・優先" : "卒業計画・推奨"}）</li>)}</ul>}</section>}
     {automaticRequiredCourses.length > 0 && <section className="notice auto-required-notice" role="status"><strong>必修を自動選択・固定しました</strong><p>{automaticRequiredCourses.map((course) => course.name).join("、")}</p></section>}
     <section className="planner-layout">
       <div className="planner-main">

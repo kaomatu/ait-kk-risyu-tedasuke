@@ -1,7 +1,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, signInWithCustomToken, signOut, type Auth, type User } from "firebase/auth";
 import { getFunctions, httpsCallable, type Functions } from "firebase/functions";
-import type { Dataset, ProfileSnapshot, ProfileSnapshotSummary, StudentProfile } from "./types";
+import type { Dataset, GraduationPlan, ProfileSnapshot, ProfileSnapshotSummary, StudentProfile } from "./types";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -99,6 +99,42 @@ export async function saveStudentProfile(profile: unknown) {
   if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
   const saveProfile = httpsCallable<{ profile: unknown }, { saved: boolean }>(functions, "saveStudentProfile");
   await saveProfile({ profile });
+}
+
+const localGraduationPlanKey = "ait-kk-local-preview-graduation-plan";
+
+function readLocalGraduationPlan(): GraduationPlan | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(localGraduationPlanKey) ?? "null");
+    if (!value || typeof value !== "object") return null;
+    const plan = value as Partial<GraduationPlan>;
+    if (plan.schemaVersion !== 1 || typeof plan.datasetVersionId !== "string" || typeof plan.programCode !== "string"
+      || !Array.isArray(plan.targetCourseIds) || !Array.isArray(plan.requiredCourseIds) || !Array.isArray(plan.recommendedCourseIds)
+      || typeof plan.savedAt !== "string") return null;
+    return plan as GraduationPlan;
+  } catch {
+    return null;
+  }
+}
+
+/** ツール3で保存した卒業計画を読み込む。番号付きの今期履修案とは別の、1件の現行計画。 */
+export async function loadGraduationPlan(): Promise<GraduationPlan | null> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") return readLocalGraduationPlan();
+  if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const loadPlan = httpsCallable<undefined, { plan: GraduationPlan | null }>(functions, "loadGraduationPlan");
+  return (await loadPlan()).data.plan;
+}
+
+/** ツール3の三分類を、認証済み利用者本人の卒業計画として保存する。 */
+export async function saveGraduationPlan(plan: GraduationPlan): Promise<GraduationPlan> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") {
+    const saved = { ...plan, savedAt: new Date().toISOString() };
+    localStorage.setItem(localGraduationPlanKey, JSON.stringify(saved));
+    return saved;
+  }
+  if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const savePlan = httpsCallable<{ plan: GraduationPlan }, { plan: GraduationPlan }>(functions, "saveGraduationPlan");
+  return (await savePlan({ plan })).data.plan;
 }
 
 const localSnapshotKey = "ait-kk-local-preview-profile-snapshots";

@@ -26,11 +26,22 @@ interface StoredProfile {
   futureGoalCourseIds?: string[];
   targetTermCredits?: number | null;
   autoRequiredCourseIds: string[];
+  autoGraduationPlanWanted?: Record<string, "must" | "prefer">;
   rechallengeCourseIds: string[];
   lotteryStates: Record<string, "none" | "applied" | "lost" | "won">;
   hardBlockedSlots: string[];
   softBlockedSlots: string[];
   annualRegisteredCredits: number;
+}
+
+interface StoredGraduationPlan {
+  schemaVersion: 1;
+  datasetVersionId: string;
+  programCode: string;
+  targetCourseIds: string[];
+  requiredCourseIds: string[];
+  recommendedCourseIds: string[];
+  savedAt: string;
 }
 
 interface ProfileSnapshotSummary {
@@ -141,11 +152,41 @@ function validProfile(value: unknown): value is StoredProfile {
     && (profile.futureGoalCourseIds === undefined || Array.isArray(profile.futureGoalCourseIds))
     && (profile.targetTermCredits === undefined || profile.targetTermCredits === null || typeof profile.targetTermCredits === "number")
     && Array.isArray(profile.autoRequiredCourseIds)
+    && (profile.autoGraduationPlanWanted === undefined || typeof profile.autoGraduationPlanWanted === "object")
     && Array.isArray(profile.rechallengeCourseIds)
     && typeof profile.lotteryStates === "object"
     && Array.isArray(profile.hardBlockedSlots)
     && Array.isArray(profile.softBlockedSlots)
     && typeof profile.annualRegisteredCredits === "number";
+}
+
+function validCourseIdList(value: unknown) {
+  return Array.isArray(value)
+    && value.length <= 500
+    && value.every((id) => typeof id === "string" && id.length > 0 && id.length <= 200);
+}
+
+function validGraduationPlan(value: unknown): value is StoredGraduationPlan {
+  if (!value || typeof value !== "object") return false;
+  const plan = value as Record<string, unknown>;
+  return plan.schemaVersion === 1
+    && typeof plan.datasetVersionId === "string" && plan.datasetVersionId.length > 0 && plan.datasetVersionId.length <= 200
+    && typeof plan.programCode === "string" && plan.programCode.length > 0 && plan.programCode.length <= 100
+    && validCourseIdList(plan.targetCourseIds)
+    && validCourseIdList(plan.requiredCourseIds)
+    && validCourseIdList(plan.recommendedCourseIds)
+    && typeof plan.savedAt === "string";
+}
+
+function assertValidGraduationPlan(value: unknown): asserts value is StoredGraduationPlan {
+  if (!validGraduationPlan(value) || JSON.stringify(value).length > 40_000) {
+    throw new HttpsError("invalid-argument", "保存する卒業計画の形式が正しくありません。");
+  }
+  const plan = value;
+  const allIds = [...plan.targetCourseIds, ...plan.requiredCourseIds, ...plan.recommendedCourseIds];
+  if (new Set(allIds).size !== allIds.length) {
+    throw new HttpsError("invalid-argument", "卒業計画の科目が複数の区分に重複しています。");
+  }
 }
 
 function assertValidProfile(value: unknown): asserts value is StoredProfile {
@@ -159,6 +200,10 @@ function assertValidProfile(value: unknown): asserts value is StoredProfile {
 
 function planningProfileRef(uid: string) {
   return getFirestore().collection("users").doc(uid).collection("planning").doc("profile");
+}
+
+function graduationPlanRef(uid: string) {
+  return getFirestore().collection("users").doc(uid).collection("planning").doc("graduationPlan");
 }
 
 function snapshotDocumentId(snapshotNo: number) {
@@ -187,6 +232,29 @@ export const saveStudentProfile = onCall(async (request) => {
     updatedAt: new Date().toISOString(),
   });
   return { saved: true };
+});
+
+export const loadGraduationPlan = onCall(async (request) => {
+  assertAppAccess(request);
+  const snapshot = await graduationPlanRef(request.auth!.uid).get();
+  const plan = snapshot.exists ? snapshot.data()?.plan : null;
+  if (plan !== null && !validGraduationPlan(plan)) {
+    throw new HttpsError("data-loss", "保存済み卒業計画の形式が正しくありません。");
+  }
+  return { plan };
+});
+
+export const saveGraduationPlan = onCall(async (request) => {
+  assertAppAccess(request);
+  const plan = (request.data as Record<string, unknown> | undefined)?.plan;
+  assertValidGraduationPlan(plan);
+  const savedAt = new Date().toISOString();
+  const savedPlan: StoredGraduationPlan = { ...plan, savedAt };
+  await graduationPlanRef(request.auth!.uid).set({
+    plan: savedPlan,
+    updatedAt: savedAt,
+  });
+  return { plan: savedPlan };
 });
 
 export const saveProfileSnapshot = onCall(async (request) => {

@@ -1,10 +1,12 @@
-import type { Course, CourseRecommendation, Dataset, PlanItem, PlanResult, StudentProfile } from "./types";
+import type { Course, CourseRecommendation, Dataset, GraduationPlan, PlanItem, PlanResult, StudentProfile } from "./types";
 import { slotKey } from "./types";
 
 const isCountedForProgression = (course: Course) => course.countForProgression !== false;
 const isCountedForGraduation = (course: Course) => course.countForGraduation !== false;
 // 2026年度KKの総合教育科目は、必修3単位と選択必修5単位で必修欄の8単位を構成する。
 const GENERAL_REQUIRED_ELECTIVE_CREDITS = 5;
+
+export type GraduationPlanContents = Pick<GraduationPlan, "targetCourseIds" | "requiredCourseIds" | "recommendedCourseIds">;
 
 export function creditsCountedForCurrentTerm(course: Course, term: StudentProfile["term"]) {
   if (course.countsTowardCreditCap === false) return 0;
@@ -47,6 +49,49 @@ export function autoRequiredCourseIds(dataset: Dataset, profile: StudentProfile)
     .map((course) => course.id);
 }
 
+/**
+ * ツール3で選んだ目標科目から、実線（登録に必要）と破線（履修推奨）の関係を辿る。
+ * 元データに破線関係がない時は、推測で補完せず recommendedCourseIds を空にする。
+ */
+export function deriveGraduationPlan(dataset: Dataset, targetCourseIds: string[]): GraduationPlanContents {
+  const byId = new Map(dataset.courses.map((course) => [course.id, course]));
+  const target = new Set(targetCourseIds.filter((id) => byId.has(id)));
+  const required = new Set<string>();
+  const recommended = new Set<string>();
+
+  function visitHard(courseId: string, visiting: Set<string>) {
+    const course = byId.get(courseId);
+    if (!course || visiting.has(courseId)) return;
+    const nextVisiting = new Set(visiting).add(courseId);
+    for (const prerequisiteId of course.hardPrerequisites ?? []) {
+      if (!byId.has(prerequisiteId) || target.has(prerequisiteId)) continue;
+      required.add(prerequisiteId);
+      visitHard(prerequisiteId, nextVisiting);
+    }
+  }
+
+  for (const courseId of target) visitHard(courseId, new Set());
+
+  function visitSoft(courseId: string, visiting: Set<string>) {
+    const course = byId.get(courseId);
+    if (!course || visiting.has(courseId)) return;
+    const nextVisiting = new Set(visiting).add(courseId);
+    for (const prerequisiteId of course.softPrerequisites ?? []) {
+      if (!byId.has(prerequisiteId)) continue;
+      if (!target.has(prerequisiteId) && !required.has(prerequisiteId)) recommended.add(prerequisiteId);
+      visitSoft(prerequisiteId, nextVisiting);
+    }
+  }
+
+  for (const courseId of [...target, ...required]) visitSoft(courseId, new Set());
+
+  return {
+    targetCourseIds: [...target].sort(),
+    requiredCourseIds: [...required].sort(),
+    recommendedCourseIds: [...recommended].sort(),
+  };
+}
+
 function courseReasons(course: Course, profile: StudentProfile) {
   const reasons: string[] = [];
   if (profile.completedCourseIds.includes(course.id) && !profile.rechallengeCourseIds.includes(course.id)) {
@@ -62,6 +107,29 @@ function courseReasons(course: Course, profile: StudentProfile) {
   if (missing.length > 0) reasons.push(`実線の前提科目が${missing.length}件、過去学期までに修得されていません。`);
   if (offeringForTerm(course, profile).length === 0) reasons.push("今学期の開講クラスがありません。");
   return reasons;
+}
+
+/** ツール3の保存済み計画から、今学期に実際に登録できる科目だけをツール2へ自動選択として渡す。 */
+export function autoGraduationPlanWanted(dataset: Dataset, profile: StudentProfile, plan: GraduationPlan | null): Record<string, DesiredPriority> {
+  if (!plan || plan.datasetVersionId !== dataset.datasetVersionId || plan.programCode !== dataset.program.code) return {};
+  const byId = new Map(dataset.courses.map((course) => [course.id, course]));
+  // 今期の必修は autoRequiredCourseIds が担当する。卒業計画側で二重に表示・管理しない。
+  const automaticRequired = new Set(autoRequiredCourseIds(dataset, profile));
+  const result: Record<string, DesiredPriority> = {};
+  const setPriority = (courseId: string, priority: DesiredPriority) => {
+    const course = byId.get(courseId);
+    if (!course || automaticRequired.has(courseId) || profile.completedCourseIds.includes(courseId)) return;
+    // 専門科目の先取りは従来の登録判定と同じく行わない。通年科目は前期にだけ候補にする。
+    if (course.category === "specialized" && course.recommendedGrade > profile.currentGrade) return;
+    if (course.recommendedTerm === "full_year" && profile.term === "fall") return;
+    if (courseReasons(course, profile).length > 0) return;
+    result[courseId] = result[courseId] === "must" || priority === "must" ? "must" : "prefer";
+  };
+
+  plan.recommendedCourseIds.forEach((courseId) => setPriority(courseId, "prefer"));
+  plan.requiredCourseIds.forEach((courseId) => setPriority(courseId, "must"));
+  plan.targetCourseIds.forEach((courseId) => setPriority(courseId, "must"));
+  return result;
 }
 
 type DesiredPriority = "must" | "prefer";
@@ -305,14 +373,14 @@ export function recommendCourses(dataset: Dataset, profile: StudentProfile, plan
     .map(({ course, offering, reasons }) => ({ course, offering, reasons }));
 }
 
-export function calculateProgress(dataset: Dataset, profile: StudentProfile, plan: PlanResult | null) {
+function calculateCreditProgress(dataset: Dataset, profile: StudentProfile, planned: Course[]) {
   const completed = dataset.courses.filter((course) => profile.completedCourseIds.includes(course.id));
   // 再チャレンジ履修は上限には算入するが、同じ単位を要件へ二重計上しない。
-  const planned = (plan?.selected.map((item) => item.course) ?? []).filter((course) => !profile.completedCourseIds.includes(course.id));
+  const uncompletedPlanned = planned.filter((course) => !profile.completedCourseIds.includes(course.id));
   const creditSum = (courses: Course[], predicate: (course: Course) => boolean) => courses.filter(predicate).reduce((sum, course) => sum + course.credits, 0);
   const completedProgression = creditSum(completed, isCountedForProgression);
-  const plannedProgression = creditSum(planned, isCountedForProgression);
-  const allGraduation = [...completed, ...planned].filter(isCountedForGraduation);
+  const plannedProgression = creditSum(uncompletedPlanned, isCountedForProgression);
+  const allGraduation = [...completed, ...uncompletedPlanned].filter(isCountedForGraduation);
   const specializedRequired = creditSum(allGraduation, (course) => course.category === "specialized" && course.requirementType === "required");
   const specializedRequiredElective = allGraduation.filter((course) => course.category === "specialized" && course.requirementType === "required_elective");
   const requiredElectiveGroups = new Map<string, Course[]>();
@@ -351,4 +419,20 @@ export function calculateProgress(dataset: Dataset, profile: StudentProfile, pla
     english,
     graduationTotal: creditSum(allGraduation, () => true),
   };
+}
+
+/** 修得済み科目と、今学期の履修案を合算した進級・卒業要件の概算。 */
+export function calculateProgress(dataset: Dataset, profile: StudentProfile, plan: PlanResult | null) {
+  return calculateCreditProgress(dataset, profile, plan?.selected.map((item) => item.course) ?? []);
+}
+
+/** 修得済み科目と、ツール3の卒業計画全体を合算した長期要件の概算。 */
+export function calculateGraduationPlanProgress(dataset: Dataset, profile: StudentProfile, plan: GraduationPlanContents | null) {
+  if (!plan) return calculateCreditProgress(dataset, profile, []);
+  const plannedIds = new Set([
+    ...plan.targetCourseIds,
+    ...plan.requiredCourseIds,
+    ...plan.recommendedCourseIds,
+  ]);
+  return calculateCreditProgress(dataset, profile, dataset.courses.filter((course) => plannedIds.has(course.id)));
 }

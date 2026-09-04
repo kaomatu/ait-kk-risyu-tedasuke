@@ -88,11 +88,27 @@ export interface StudentProfile {
   targetTermCredits: number | null;
   /** 現在の学期に開講する未修得必修として、ツールが自動で「必ず取りたい」にした科目。 */
   autoRequiredCourseIds: string[];
+  /** ツール3で保存した卒業計画から、今学期に自動選択した科目と優先度。手動の希望と区別して管理する。 */
+  autoGraduationPlanWanted: Record<string, "must" | "prefer">;
   rechallengeCourseIds: string[];
   lotteryStates: Record<string, "none" | "applied" | "lost" | "won">;
   hardBlockedSlots: string[];
   softBlockedSlots: string[];
   annualRegisteredCredits: number;
+}
+
+/** ツール3で保存する、卒業までの科目目標。各IDはCourse.idを参照する。 */
+export interface GraduationPlan {
+  schemaVersion: 1;
+  datasetVersionId: string;
+  programCode: string;
+  /** 利用者が卒業までに取りたい・やりたい科目として選んだ科目。 */
+  targetCourseIds: string[];
+  /** targetCourseIds を履修するために、実線の先修条件から再帰的に求めた科目。 */
+  requiredCourseIds: string[];
+  /** targetCourseIds につながる、破線の推奨順序から再帰的に求めた科目。 */
+  recommendedCourseIds: string[];
+  savedAt: string;
 }
 
 /** 番号付きで保存する履修計画の一覧用メタデータ。 */
