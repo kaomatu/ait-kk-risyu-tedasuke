@@ -138,11 +138,13 @@ const foundation: CurriculumTreePage = {
     course("ait.kk.K1022", 370, 667), course("ait.kk.K1023", 662, 667), course("ait.kk.K2113", 1098, 667),
     course("ait.kk.K2115", 1098, 708), cluster(["ait.kk.K2117"], 370, 750, 990, 34),
 
-    course("ait.kk.K1019", 517, 807), course("ait.kk.K2087", 662, 807), course("ait.kk.K1013", 808, 807),
-    course("ait.kk.K2058", 370, 847), course("ait.kk.K2059", 517, 847),
-    course("ait.kk.K1020", 370, 887), course("ait.kk.K2062", 808, 887),
-    course("ait.kk.K2060", 370, 926), course("ait.kk.K2061", 517, 926), course("ait.kk.K2063", 808, 926),
-    course("ait.kk.K1005", 370, 966), course("ait.kk.K2016", 517, 966),
+    // 114頁下部は、通常の34px枠・40px間隔ではなく、元画像では約26〜28px枠・
+    // 31px間隔で組まれている。選択時の操作枠が画像の科目枠と重なるよう実測値を使う。
+    course("ait.kk.K1019", 517, 805, 116, 28), course("ait.kk.K2087", 662, 805, 116, 28), course("ait.kk.K1013", 808, 805, 116, 28),
+    course("ait.kk.K2058", 370, 845, 116, 28), course("ait.kk.K2059", 517, 845, 116, 28),
+    course("ait.kk.K1020", 370, 876, 116, 28), course("ait.kk.K2062", 808, 876, 116, 28),
+    course("ait.kk.K2060", 370, 907, 116, 28), course("ait.kk.K2061", 517, 907, 116, 28), course("ait.kk.K2063", 808, 907, 116, 28),
+    course("ait.kk.K1005", 370, 939, 116, 28), course("ait.kk.K2016", 517, 939, 116, 28),
   ],
 };
 

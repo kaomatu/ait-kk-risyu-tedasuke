@@ -56,6 +56,14 @@ describe("KK interactive curriculum tree layout", () => {
     }
   });
 
+  it("uses the measured bounds for the compact foundation-course rows on page 114", () => {
+    const boundsByCourseId = new Map(curriculumTreeCourseBounds(kkCurriculumTree).map((bound) => [bound.courseId, bound]));
+    expect(boundsByCourseId.get("ait.kk.K1019")).toMatchObject({ x: 517, y: 805, width: 116, height: 28 });
+    expect(boundsByCourseId.get("ait.kk.K1020")).toMatchObject({ x: 370, y: 876, width: 116, height: 28 });
+    expect(boundsByCourseId.get("ait.kk.K2060")).toMatchObject({ x: 370, y: 907, width: 116, height: 28 });
+    expect(boundsByCourseId.get("ait.kk.K1005")).toMatchObject({ x: 370, y: 939, width: 116, height: 28 });
+  });
+
   it("keeps the visual link ledger and planning prerequisite data in exact agreement", () => {
     const linksByTarget = new Map<string, { hard: string[]; soft: string[] }>();
     for (const link of kk2026TreeCourseLinks) {

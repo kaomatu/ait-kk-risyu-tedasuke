@@ -100,9 +100,9 @@ input, select { min-height: 44px; border: 1px solid #d7ddea; border-radius: 10px
 .interactive-tree-course[data-requirement="required_elective"] { color: transparent; background: transparent; border-color: transparent; }
 .interactive-tree-course:hover { z-index: 5; background: rgba(84, 101, 185, .14); border: 2px solid rgba(55, 71, 156, .82); box-shadow: none; transform: none; }
 .interactive-tree-course:focus-visible { z-index: 6; outline: 3px solid #f0b456; outline-offset: 2px; }
-.interactive-tree-course[data-state="target"] { color: #24308a; background: rgba(81, 92, 187, .27); border: 3px solid #36439c; box-shadow: 0 0 0 2px rgba(81, 92, 187, .16); }
-.interactive-tree-course[data-state="required"] { color: #853d10; background: rgba(255, 220, 184, .48); border: 3px solid #ce813f; box-shadow: 0 0 0 2px rgba(206, 129, 63, .12); }
-.interactive-tree-course[data-state="recommended"] { color: #12655f; background: rgba(205, 244, 237, .50); border: 3px dashed #278d82; box-shadow: 0 0 0 2px rgba(39, 141, 130, .10); }
+.interactive-tree-course[data-state="target"] { color: #24308a; background: rgba(81, 92, 187, .27); border: 3px solid #36439c; box-shadow: none; }
+.interactive-tree-course[data-state="required"] { color: #853d10; background: rgba(255, 220, 184, .48); border: 3px solid #ce813f; box-shadow: none; }
+.interactive-tree-course[data-state="recommended"] { color: #12655f; background: rgba(205, 244, 237, .50); border: 3px dashed #278d82; box-shadow: none; }
 .interactive-tree-course[data-state="completed"] { color: #226c47; background: rgba(210, 239, 221, .38); border: 2px solid #4a9b70; }
 .interactive-tree-course[data-state]:not([data-state="default"]) > i { display: block; }
 .interactive-tree-cluster { z-index: 2; overflow: visible; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
