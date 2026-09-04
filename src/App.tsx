@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loginWithPassphrase, logout, saveGraduationPlan, saveProfileSnapshot, subscribeToAuth } from "./firebase";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
 import { filterPlannerCoursePicker, type CoursePickerTermScope } from "./coursePicker";
+import { createPlanScheduleSegments } from "./planSchedule";
 import { GraduationPlanner } from "./GraduationPlanner";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type GraduationPlan, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
 import "./styles.css";
@@ -579,11 +580,33 @@ function PlanResultView({ dataset, profile, plan, recommendations, onAddRecommen
   const plannedCredits = plan.selected.reduce((sum, item) => sum + item.course.credits, 0);
   return <section id="term-plan-result" className="plan-result" tabIndex={-1}><div className="section-heading"><div><p className="eyebrow">PLAN RESULT</p><h2>今学期の履修案</h2></div><span className={plan.rejected.length ? "pill warning" : "pill success"}>{plan.rejected.length ? "注意あり" : "登録可能"}</span></div>
     <div className="metric-grid compact-metrics"><Metric label="取得見込み" value={`${plannedCredits}単位`} detail="全科目に合格した場合" /><Metric label="抽選結果待ち" value={`${plan.lotteryCredits}単位`} detail="当選は保証されません" /><Metric label="学期上限" value={`${plan.capCountedCredits} / ${dataset.policies.termCap}`} detail="上限算入単位" /><Metric label="年間上限" value={`${profile.annualRegisteredCredits + plan.capCountedCredits} / ${annualCap}`} detail="登録済み分を含む" /></div>
+    <PlanTimetable plan={plan} profile={profile} />
     <div className="plan-cards">{plan.selected.length ? plan.selected.map(({ course, offering, priority }) => <article className="plan-card" key={offering.id}><span className="course-code">{displayCourseCode(course)}</span><h3>{course.name}</h3><p>{weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限 / クラス {offering.classCode}</p><small>{course.credits}単位・{labelRequirement(course)}{offering.lottery ? "・抽選" : ""}{offering.alternateWeeks ? "・隔週" : ""}</small><em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・固定" : priority === "must" ? "希望を優先" : priority === "prefer" ? "希望科目" : "配当期の候補"}</em></article>) : <p>条件に合う開講科目がありません。希望・修得履歴・空けたい時限を見直してください。</p>}</div>
     {profile.targetTermCredits !== null && plannedCredits < profile.targetTermCredits && <section className="recommendation-box"><div><p className="eyebrow">OPTIONAL RECOMMENDATIONS</p><h3>あと {profile.targetTermCredits - plannedCredits} 単位の候補</h3><p>履修案には自動追加しません。理由を確認してから「できれば取りたい」に追加してください。</p></div>{recommendations.length > 0 ? <div className="recommendation-list">{recommendations.map(({ course, offering, reasons }) => <article key={course.id} className="recommendation-card"><div><span className="course-code">{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位 / {weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限{offering.lottery ? " / 抽選" : ""}</small><p>{reasons.join("・")}</p></div><button className="secondary-button" onClick={() => onAddRecommendation(course)}>できれば取りたいに追加</button></article>)}</div> : <p className="recommendation-empty">現在の時間割・上限・先修条件を満たした追加候補はありません。空き希望または目標単位を見直してください。</p>}</section>}
     {plan.warnings.length > 0 && <div className="notice warning-box"><strong>注意</strong><ul>{plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
     {plan.rejected.length > 0 && <div className="notice"><strong>選べなかった希望科目</strong><ul>{plan.rejected.map(({ course, reasons }) => <li key={course.id}><b>{course.name}</b>: {reasons.join(" ")}</li>)}</ul></div>}
     <p className="disclaimer">この結果は計画支援です。最終的な履修可否は、最新の公式資料と大学の履修登録画面で確認してください。</p>
+  </section>;
+}
+
+function PlanTimetable({ plan, profile }: { plan: PlanResult; profile: StudentProfile }) {
+  const segments = createPlanScheduleSegments(plan.selected);
+  const priorityClass = (courseId: string, priority: "must" | "prefer" | "suggested") => {
+    if (profile.autoRequiredCourseIds.includes(courseId)) return "required";
+    return priority;
+  };
+
+  return <section className="plan-timetable" aria-labelledby="plan-timetable-title">
+    <div className="plan-timetable-heading"><div><p className="eyebrow">WEEKLY SCHEDULE</p><h3 id="plan-timetable-title">時間割で確認</h3></div><p>選ばれたクラスを曜日・時限ごとに表示しています。</p></div>
+    {segments.length > 0 ? <div className="plan-timetable-scroll"><div className="plan-timetable-grid">
+      <span className="plan-timetable-corner" aria-hidden="true" />
+      {weekdays.map((day, index) => <span className="plan-timetable-day" style={{ gridColumn: index + 2 }} key={day}>{weekdayLabels[day]}</span>)}
+      {periods.map((period) => <Fragment key={`plan-period-${period}`}><span className="plan-timetable-period" style={{ gridRow: period + 1 }}>{period}限</span>{weekdays.map((day, index) => <span className="plan-timetable-empty" style={{ gridColumn: index + 2, gridRow: period + 1 }} aria-hidden="true" key={`${day}-${period}`} />)}</Fragment>)}
+      {segments.map((segment, index) => <article className={`plan-timetable-course ${priorityClass(segment.course.id, segment.priority)}${segment.offering.lottery ? " lottery" : ""}`} style={{ gridColumn: weekdays.indexOf(segment.offering.weekday) + 2, gridRow: `${segment.startPeriod + 1} / span ${segment.span}` }} key={`${segment.offering.id}-${segment.startPeriod}-${index}`} aria-label={`${weekdayLabels[segment.offering.weekday]}曜日${segment.startPeriod}限、${segment.course.name}${segment.offering.lottery ? "、抽選科目" : ""}`}>
+        <strong>{segment.course.name}</strong><small>{segment.offering.classCode}{segment.offering.lottery ? " · 抽選" : ""}</small>
+      </article>)}
+    </div></div> : <p className="plan-timetable-empty-message">履修案に選ばれた科目がないため、時間割は表示されません。</p>}
+    <div className="plan-timetable-legend"><span className="required">必修・固定</span><span className="must">必ず取りたい</span><span className="prefer">できれば取りたい</span><span className="suggested">候補</span><span className="lottery">抽選</span></div>
   </section>;
 }
 
