@@ -1,10 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { loadCurriculumTreeImages } from "./firebase";
 import { calculateGraduationPlanProgress, deriveGraduationPlan } from "./planEngine";
 import type { Course, Dataset, GraduationPlan, StudentProfile } from "./types";
 
 type RequirementKey = keyof Dataset["policies"]["graduation"];
-type Relationship = { from: string; to: string; kind: "hard" | "soft" };
-type GraphEdge = Relationship & { startX: number; startY: number; endX: number; endY: number };
 
 const graduationRequirements: Array<{ key: RequirementKey; title: string; description: string }> = [
   { key: "specializedRequired", title: "専門教育・必修", description: "専門教育科目の必修として計上される単位" },
@@ -16,17 +15,6 @@ const graduationRequirements: Array<{ key: RequirementKey; title: string; descri
   { key: "english", title: "英語系", description: "英語系として計上される単位" },
   { key: "total", title: "卒業要件・総計", description: "卒業要件に計上される全区分の単位" },
 ];
-
-const termColumns = [
-  { grade: 1, term: "spring", label: "1年前期" },
-  { grade: 1, term: "fall", label: "1年後期" },
-  { grade: 2, term: "spring", label: "2年前期" },
-  { grade: 2, term: "fall", label: "2年後期" },
-  { grade: 3, term: "spring", label: "3年前期" },
-  { grade: 3, term: "fall", label: "3年後期" },
-  { grade: 4, term: "spring", label: "4年前期" },
-  { grade: 4, term: "fall", label: "4年後期" },
-] as const;
 
 function isGraduationCourse(course: Course) {
   return course.countForGraduation !== false && course.requirementType !== "non_counting";
@@ -57,18 +45,6 @@ function courseCode(course: Course) {
   return course.officialCode === false ? "資料コード未確認" : course.code;
 }
 
-function classification(courseId: string, plan: ReturnType<typeof deriveGraduationPlan>) {
-  if (plan.targetCourseIds.includes(courseId)) return "target";
-  if (plan.requiredCourseIds.includes(courseId)) return "required";
-  if (plan.recommendedCourseIds.includes(courseId)) return "recommended";
-  return "";
-}
-
-function termColumnFor(course: Course) {
-  const term = course.recommendedTerm === "full_year" ? "spring" : course.recommendedTerm;
-  return termColumns.findIndex((column) => column.grade === course.recommendedGrade && column.term === term);
-}
-
 function CourseList({
   courses,
   targetCourseIds,
@@ -90,6 +66,57 @@ function CourseList({
   })}</div>;
 }
 
+/**
+ * 資料の読みやすさをそのまま残すため、KKでは元のカリキュラムツリーを横向きで表示する。
+ * 選択操作のボタンを図に重ねると線・文字を覆ってしまうため、同じカード内の検索欄に分離する。
+ */
+function CurriculumTreeReference({
+  dataset,
+  profile,
+  targetCourseIds,
+  onToggle,
+}: {
+  dataset: Dataset;
+  profile: StudentProfile;
+  targetCourseIds: string[];
+  onToggle: (courseId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase("ja-JP");
+  const [treeImages, setTreeImages] = useState<{ page1: string; page2: string } | null>(null);
+  const [treeImageError, setTreeImageError] = useState(false);
+  const matches = useMemo(() => dataset.courses
+    .filter((course) => {
+      if (!normalizedQuery) return targetCourseIds.includes(course.id);
+      return `${course.code} ${course.name}`.toLocaleLowerCase("ja-JP").includes(normalizedQuery);
+    })
+    .sort((a, b) => a.recommendedGrade - b.recommendedGrade || a.code.localeCompare(b.code, "ja"))
+    .slice(0, 30), [dataset, normalizedQuery, targetCourseIds]);
+  const isKkReferenceTree = dataset.program.code === "KK";
+
+  useEffect(() => {
+    let disposed = false;
+    setTreeImages(null);
+    setTreeImageError(false);
+    if (!isKkReferenceTree) return () => { disposed = true; };
+    loadCurriculumTreeImages()
+      .then((images) => {
+        if (!disposed) setTreeImages(images);
+      })
+      .catch(() => {
+        if (!disposed) setTreeImageError(true);
+      });
+    return () => { disposed = true; };
+  }, [dataset.datasetVersionId, isKkReferenceTree]);
+
+  return <section className="section-card curriculum-reference-card">
+    <div className="section-heading"><div><p className="eyebrow">ORIGINAL CURRICULUM TREE</p><h2>卒業までのカリキュラムツリー</h2></div><span className="legend"><i className="legend-hard-line" />実線: 前提科目 <i className="legend-soft-line" />破線: 関連・推奨</span></div>
+    <p className="compact">学期ごとの上詰め表示は使わず、元資料と同じ「学習到達目標・専門分野」の行と、科目の位置・線を保って表示します。</p>
+    {treeImages ? <div className="curriculum-reference-pages"><figure><img src={treeImages.page1} alt="コンピュータシステム専攻 カリキュラムツリー（学習到達目標・基礎学力）" /></figure><figure><img src={treeImages.page2} alt="コンピュータシステム専攻 カリキュラムツリー（専門基礎・専門技術）" /></figure></div> : <div className="curriculum-reference-unavailable">{treeImageError ? "元資料ツリーを読み込めませんでした。時間をおいて再読み込みしてください。" : isKkReferenceTree ? "認証済みの元資料ツリーを読み込んでいます…" : "この専攻の元資料ツリーはまだ登録されていません。ツール1で、レイアウト情報を含むカリキュラムツリー資料を登録してください。"}</div>}
+    <section className="tree-course-picker"><div><p className="eyebrow">SELECT TARGET COURSES</p><h3>科目を目標に追加する</h3><p>元図で科目の位置とつながりを確認し、ここから目標科目を選びます。選択状態は下の3区分へすぐ反映されます。</p></div><label>科目名または科目コードで検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label><div className="tree-course-picker-results">{matches.length > 0 ? matches.map((course) => { const selected = targetCourseIds.includes(course.id); return <button key={course.id} className={selected ? "tree-course-choice selected" : "tree-course-choice"} onClick={() => onToggle(course.id)}><span className="course-code">{courseCode(course)}</span><strong>{course.name}</strong><small>{course.recommendedGrade}年{course.recommendedTerm === "full_year" ? "通年" : course.recommendedTerm === "spring" ? "前期" : "後期"} / {requirementLabel(course)}{profile.completedCourseIds.includes(course.id) ? " / 修得済み" : ""}</small><em>{selected ? "目標から外す" : "目標に追加"}</em></button>; }) : <p className="compact">科目名または科目コードを入力して検索してください。</p>}</div></section>
+  </section>;
+}
+
 export function GraduationPlanner({
   dataset,
   profile,
@@ -105,8 +132,6 @@ export function GraduationPlanner({
 }) {
   const [targetCourseIds, setTargetCourseIds] = useState<string[]>(savedPlan?.targetCourseIds ?? []);
   const [selectedRequirement, setSelectedRequirement] = useState<RequirementKey | null>(null);
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = useState<GraphEdge[]>([]);
 
   useEffect(() => {
     setTargetCourseIds(savedPlan?.targetCourseIds ?? []);
@@ -121,48 +146,8 @@ export function GraduationPlanner({
     savedAt: savedPlan?.savedAt ?? "",
   }), [dataset, derived, savedPlan?.savedAt]);
   const progress = useMemo(() => calculateGraduationPlanProgress(dataset, profile, derived), [dataset, profile, derived]);
-  const coursesByColumn = useMemo(() => termColumns.map((_, index) => dataset.courses
-    .filter((course) => termColumnFor(course) === index)
-    .sort((a, b) => a.category.localeCompare(b.category) || a.code.localeCompare(b.code, "ja"))), [dataset]);
-  const relationships = useMemo<Relationship[]>(() => dataset.courses.flatMap((course) => [
-    ...(course.hardPrerequisites ?? []).map((from) => ({ from, to: course.id, kind: "hard" as const })),
-    ...(course.softPrerequisites ?? []).map((from) => ({ from, to: course.id, kind: "soft" as const })),
-  ]), [dataset]);
   const selectedRequirementDefinition = graduationRequirements.find((item) => item.key === selectedRequirement) ?? null;
   const selectedRequirementCourses = useMemo(() => selectedRequirement ? coursesForRequirement(dataset, selectedRequirement) : [], [dataset, selectedRequirement]);
-
-  useLayoutEffect(() => {
-    const root = mapRef.current;
-    if (!root) return;
-    const updateEdges = () => {
-      const rootRect = root.getBoundingClientRect();
-      const elements = new Map(Array.from(root.querySelectorAll<HTMLElement>("[data-course-node]")).map((element) => [element.dataset.courseNode!, element]));
-      const nextEdges = relationships.flatMap((relationship) => {
-        const from = elements.get(relationship.from);
-        const to = elements.get(relationship.to);
-        if (!from || !to) return [];
-        const source = from.getBoundingClientRect();
-        const target = to.getBoundingClientRect();
-        return [{
-          ...relationship,
-          startX: source.right - rootRect.left + root.scrollLeft,
-          startY: source.top + source.height / 2 - rootRect.top + root.scrollTop,
-          endX: target.left - rootRect.left + root.scrollLeft,
-          endY: target.top + target.height / 2 - rootRect.top + root.scrollTop,
-        }];
-      });
-      setEdges(nextEdges);
-    };
-    const frame = window.requestAnimationFrame(updateEdges);
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateEdges);
-    observer?.observe(root);
-    window.addEventListener("resize", updateEdges);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-      window.removeEventListener("resize", updateEdges);
-    };
-  }, [relationships, coursesByColumn]);
 
   function toggleTarget(courseId: string) {
     setTargetCourseIds((current) => current.includes(courseId) ? current.filter((id) => id !== courseId) : [...current, courseId]);
@@ -176,17 +161,12 @@ export function GraduationPlanner({
   return <section className="graduation-planner">
     <section className="planner-header"><div><p className="eyebrow">TOOL 3 / GRADUATION PLAN</p><h1>卒業までの目標を、科目のつながりから決める。</h1><p>取りたい科目を選ぶと、実線の先修条件と破線の推奨順序を辿り、卒業までに見通したい科目を3つの区分に整理します。保存後、ツール2は今学期に該当する科目を自動選択します。</p></div><div className="planner-actions"><button className="primary-button" disabled={busy || draftPlan.targetCourseIds.length === 0} onClick={() => void save()}>{busy ? "保存中…" : "卒業計画を保存"}</button></div></section>
 
-    <section className="graduation-intro section-card"><div><strong>対象の所属</strong><span>{dataset.program.faculty} / {dataset.program.department} / {dataset.program.name}</span></div><div><strong>保存状態</strong><span>{savedPlan ? `保存済み（${new Date(savedPlan.savedAt).toLocaleString("ja-JP")}）` : "未保存"}</span></div><div><strong>選択方法</strong><span>科目カードをクリックして、卒業までの目標に追加・解除</span></div></section>
+    <section className="graduation-intro section-card"><div><strong>対象の所属</strong><span>{dataset.program.faculty} / {dataset.program.department} / {dataset.program.name}</span></div><div><strong>保存状態</strong><span>{savedPlan ? `保存済み（${new Date(savedPlan.savedAt).toLocaleString("ja-JP")}）` : "未保存"}</span></div><div><strong>選択方法</strong><span>元図で位置とつながりを確認し、検索欄から目標に追加・解除</span></div></section>
 
-    <section className="section-card curriculum-map-card"><div className="section-heading"><div><p className="eyebrow">CONNECTED CURRICULUM TREE</p><h2>卒業までのカリキュラムツリー</h2></div><span className="legend"><i className="legend-target" />目標 <i className="legend-required-link" />必要な先修 <i className="legend-recommended-link" />推奨 <i className="legend-hard-line" />実線 <i className="legend-soft-line" />破線</span></div><p className="compact">矢印は前の科目から次の科目です。実線は単位修得が必要な先修条件、破線は履修を推奨する順序です。横にスクロールして全学年を確認できます。</p>
-      <div className="curriculum-map-scroll"><div className="curriculum-map-canvas" ref={mapRef}>
-        <svg className="curriculum-links" width="100%" height="100%" aria-hidden="true"><defs><marker id="hard-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" /></marker><marker id="soft-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" /></marker></defs>{edges.map((edge) => { const curve = Math.max(28, Math.abs(edge.endX - edge.startX) * .38); return <path key={`${edge.kind}-${edge.from}-${edge.to}`} className={edge.kind === "hard" ? "hard-link" : "soft-link"} d={`M ${edge.startX} ${edge.startY} C ${edge.startX + curve} ${edge.startY}, ${edge.endX - curve} ${edge.endY}, ${edge.endX} ${edge.endY}`} markerEnd={edge.kind === "hard" ? "url(#hard-arrow)" : "url(#soft-arrow)"} />; })}</svg>
-        <div className="curriculum-map-grid">{termColumns.map((column, index) => <section className="map-column" key={`${column.grade}-${column.term}`}><h3>{column.label}</h3>{coursesByColumn[index]!.map((course) => { const kind = classification(course.id, derived); const completed = profile.completedCourseIds.includes(course.id); return <button key={course.id} data-course-node={course.id} className={`map-course ${kind} ${course.requirementType} ${completed ? "completed" : ""}`} onClick={() => toggleTarget(course.id)}><span className="course-code">{courseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位 / {requirementLabel(course)}{course.recommendedTerm === "full_year" ? " / 通年" : ""}</small>{kind === "target" && <em>目標</em>}{kind === "required" && <em>必要な先修</em>}{kind === "recommended" && <em>推奨</em>}{completed && <i>修得済み</i>}</button>; })}</section>)}</div>
-      </div></div>
-    </section>
+    <CurriculumTreeReference dataset={dataset} profile={profile} targetCourseIds={derived.targetCourseIds} onToggle={toggleTarget} />
 
     <section className="plan-classification-grid">
-      <article className="section-card plan-classification target"><p className="eyebrow">1. TARGET COURSES</p><h2>取りたい・やりたい科目</h2><p>{derived.targetCourseIds.length}科目。あなたが選んだ卒業までの目標です。</p><PlanCourseNames dataset={dataset} ids={derived.targetCourseIds} empty="カリキュラムツリーから科目を選んでください。" /></article>
+      <article className="section-card plan-classification target"><p className="eyebrow">1. TARGET COURSES</p><h2>取りたい・やりたい科目</h2><p>{derived.targetCourseIds.length}科目。あなたが選んだ卒業までの目標です。</p><PlanCourseNames dataset={dataset} ids={derived.targetCourseIds} empty="上の検索欄から科目を選んでください。" /></article>
       <article className="section-card plan-classification required"><p className="eyebrow">2. REQUIRED PREREQUISITES</p><h2>目標のために必要な科目</h2><p>{derived.requiredCourseIds.length}科目。実線の先修条件を再帰的に辿っています。</p><PlanCourseNames dataset={dataset} ids={derived.requiredCourseIds} empty="選んだ目標科目に、未登録の実線先修条件はありません。" /></article>
       <article className="section-card plan-classification recommended"><p className="eyebrow">3. RECOMMENDED PREPARATION</p><h2>取っておいた方がよい科目</h2><p>{derived.recommendedCourseIds.length}科目。破線の推奨順序を再帰的に辿っています。</p><PlanCourseNames dataset={dataset} ids={derived.recommendedCourseIds} empty="現在の登録データには、選んだ目標から辿れる破線の推奨関係がありません。推測で補完はしていません。" /></article>
     </section>

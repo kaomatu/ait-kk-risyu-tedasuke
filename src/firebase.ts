@@ -3,6 +3,8 @@ import { getAuth, onAuthStateChanged, signInWithCustomToken, signOut, type Auth,
 import { getFunctions, httpsCallable, type Functions } from "firebase/functions";
 import type { Dataset, GraduationPlan, ProfileSnapshot, ProfileSnapshotSummary, StudentProfile } from "./types";
 
+export type CurriculumTreeImages = { page1: string; page2: string };
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -64,6 +66,18 @@ export async function loadCatalog(): Promise<Dataset | null> {
   const getCatalog = httpsCallable<undefined, { dataset: Dataset | null }>(functions, "getCatalog");
   const response = await getCatalog();
   return response.data.dataset;
+}
+
+/** 認証済み利用者だけが、KKの元カリキュラムツリー画像を取得する。 */
+export async function loadCurriculumTreeImages(): Promise<CurriculumTreeImages | null> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") return null;
+  if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const getCurriculumTreeImages = httpsCallable<undefined, { page1Base64: string; page2Base64: string }>(functions, "getKkCurriculumTreeImages");
+  const response = await getCurriculumTreeImages();
+  return {
+    page1: `data:image/png;base64,${response.data.page1Base64}`,
+    page2: `data:image/png;base64,${response.data.page2Base64}`,
+  };
 }
 
 export async function createInitialKkDataset(): Promise<Dataset> {

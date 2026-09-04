@@ -1,4 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
@@ -96,6 +98,20 @@ export const getCatalog = onCall(async (request) => {
   assertAppAccess(request);
   const snapshot = await getFirestore().collection("datasets").doc(DATASET_ID).get();
   return { dataset: snapshot.exists ? snapshot.data() : null };
+});
+
+/**
+ * 元資料のカリキュラムツリーは静的ホスティングに置かず、アプリ認証済み利用者だけに返す。
+ * __dirname は functions/lib を指し、build 時に assets が同じ階層へコピーされる。
+ */
+export const getKkCurriculumTreeImages = onCall(async (request) => {
+  assertAppAccess(request);
+  const assetDirectory = join(__dirname, "assets");
+  const [page1, page2] = await Promise.all([
+    readFile(join(assetDirectory, "kk2026-curriculum-tree-1.png")),
+    readFile(join(assetDirectory, "kk2026-curriculum-tree-2.png")),
+  ]);
+  return { page1Base64: page1.toString("base64"), page2Base64: page2.toString("base64") };
 });
 
 export const seedKkDataset = onCall(async (request) => {
