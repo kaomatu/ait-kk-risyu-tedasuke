@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createKk2026Courses } from "../functions/src/kk2026Catalog";
 import { mockCatalog } from "./mockCatalog";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateGraduationPlanProgress, calculateProgress, creditsCountedForCurrentTerm, deriveGraduationPlan, generatePlan, prerequisitePriorities, recommendCourses, requiredScheduleSlots } from "./planEngine";
 import type { Course, Dataset, StudentProfile } from "./types";
@@ -286,6 +287,22 @@ describe("履修計画エンジン", () => {
     expect(derived.targetCourseIds).toEqual([target.id]);
     expect(derived.requiredCourseIds).toEqual([foundation.id, intermediate.id]);
     expect(derived.recommendedCourseIds).toEqual([preparation.id]);
+  });
+
+  it("KKの関係修正表を卒業計画の必要・推奨科目へ反映する", () => {
+    const kkDataset: Dataset = { ...mockCatalog, courses: createKk2026Courses() };
+
+    const operationsResearch = deriveGraduationPlan(kkDataset, ["ait.kk.K2017"]);
+    expect(operationsResearch.requiredCourseIds).toContain("ait.kk.K2061");
+    expect(operationsResearch.recommendedCourseIds).toContain("ait.kk.K2059");
+
+    const geometry = deriveGraduationPlan(kkDataset, ["ait.kk.K2063"]);
+    expect(geometry.recommendedCourseIds).toContain("ait.kk.K1020");
+    expect(geometry.recommendedCourseIds).not.toContain("ait.kk.K2059");
+
+    const database = deriveGraduationPlan(kkDataset, ["ait.kk.K3005"]);
+    expect(database.requiredCourseIds).toContain("ait.kk.K2083");
+    expect(database.recommendedCourseIds).not.toContain("ait.kk.K2022");
   });
 
   it("保存済み卒業計画から、今学期に登録可能な必要・目標科目だけを自動選択する", () => {
