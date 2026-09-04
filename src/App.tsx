@@ -437,6 +437,13 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
     setPickerGrade(profile.currentGrade);
   }, [profile.currentGrade]);
 
+  // 生成結果は入力カード群の後に配置されるため、生成後は結果欄まで移動する。
+  // これにより、画面の上部に留まったまま結果が見つからない状態を防ぐ。
+  useEffect(() => {
+    if (!plan) return;
+    document.getElementById("term-plan-result")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [plan]);
+
   function isOfferedThisTerm(course: Course) {
     return course.offerings.some((offering) => canUseOffering(course, offering, profile));
   }
@@ -570,7 +577,7 @@ function SnapshotControls({ snapshots, busy, onSave, onLoad }: { snapshots: Prof
 function PlanResultView({ dataset, profile, plan, recommendations, onAddRecommendation }: { dataset: Dataset; profile: StudentProfile; plan: PlanResult; recommendations: ReturnType<typeof recommendCourses>; onAddRecommendation: (course: Course) => void }) {
   const annualCap = activeAnnualCap(dataset, profile);
   const plannedCredits = plan.selected.reduce((sum, item) => sum + item.course.credits, 0);
-  return <section className="plan-result"><div className="section-heading"><div><p className="eyebrow">PLAN RESULT</p><h2>今学期の履修案</h2></div><span className={plan.rejected.length ? "pill warning" : "pill success"}>{plan.rejected.length ? "注意あり" : "登録可能"}</span></div>
+  return <section id="term-plan-result" className="plan-result" tabIndex={-1}><div className="section-heading"><div><p className="eyebrow">PLAN RESULT</p><h2>今学期の履修案</h2></div><span className={plan.rejected.length ? "pill warning" : "pill success"}>{plan.rejected.length ? "注意あり" : "登録可能"}</span></div>
     <div className="metric-grid compact-metrics"><Metric label="取得見込み" value={`${plannedCredits}単位`} detail="全科目に合格した場合" /><Metric label="抽選結果待ち" value={`${plan.lotteryCredits}単位`} detail="当選は保証されません" /><Metric label="学期上限" value={`${plan.capCountedCredits} / ${dataset.policies.termCap}`} detail="上限算入単位" /><Metric label="年間上限" value={`${profile.annualRegisteredCredits + plan.capCountedCredits} / ${annualCap}`} detail="登録済み分を含む" /></div>
     <div className="plan-cards">{plan.selected.length ? plan.selected.map(({ course, offering, priority }) => <article className="plan-card" key={offering.id}><span className="course-code">{displayCourseCode(course)}</span><h3>{course.name}</h3><p>{weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限 / クラス {offering.classCode}</p><small>{course.credits}単位・{labelRequirement(course)}{offering.lottery ? "・抽選" : ""}{offering.alternateWeeks ? "・隔週" : ""}</small><em>{profile.autoRequiredCourseIds.includes(course.id) ? "必修・固定" : priority === "must" ? "希望を優先" : priority === "prefer" ? "希望科目" : "配当期の候補"}</em></article>) : <p>条件に合う開講科目がありません。希望・修得履歴・空けたい時限を見直してください。</p>}</div>
     {profile.targetTermCredits !== null && plannedCredits < profile.targetTermCredits && <section className="recommendation-box"><div><p className="eyebrow">OPTIONAL RECOMMENDATIONS</p><h3>あと {profile.targetTermCredits - plannedCredits} 単位の候補</h3><p>履修案には自動追加しません。理由を確認してから「できれば取りたい」に追加してください。</p></div>{recommendations.length > 0 ? <div className="recommendation-list">{recommendations.map(({ course, offering, reasons }) => <article key={course.id} className="recommendation-card"><div><span className="course-code">{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位 / {weekdayLabels[offering.weekday]}曜 {offering.periods.join("・")}限{offering.lottery ? " / 抽選" : ""}</small><p>{reasons.join("・")}</p></div><button className="secondary-button" onClick={() => onAddRecommendation(course)}>できれば取りたいに追加</button></article>)}</div> : <p className="recommendation-empty">現在の時間割・上限・先修条件を満たした追加候補はありません。空き希望または目標単位を見直してください。</p>}</section>}
