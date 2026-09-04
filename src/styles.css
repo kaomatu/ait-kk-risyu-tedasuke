@@ -70,9 +70,20 @@ input, select { min-height: 44px; border: 1px solid #d7ddea; border-radius: 10px
  */
 .interactive-tree-reference-images { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .interactive-tree-reference-page { position: absolute; left: 0; display: block; height: 1064px; max-width: none; pointer-events: none; user-select: none; }
-.interactive-tree-reference-page.page-114 { top: 0; width: 1506px; }
+.interactive-tree-reference-page.page-114 {
+  top: 0;
+  width: 1506px;
+  /* 114頁のスクリーンショット下端にある外周枠は、115頁と重ねる領域では不要。 */
+  clip-path: inset(0 0 4px 0);
+}
 /* 115頁の上端は114頁の下端と重なり、資料のままの接続線を連続して見せる。 */
-.interactive-tree-reference-page.page-115 { top: 944px; width: 1502px; mix-blend-mode: multiply; }
+.interactive-tree-reference-page.page-115 {
+  top: 944px;
+  width: 1502px;
+  mix-blend-mode: multiply;
+  /* 115頁のスクリーンショット上端にある黒い外周枠を継ぎ目に出さない。 */
+  clip-path: inset(4px 0 0 0);
+}
 .interactive-tree-nodes { z-index: 2; }
 .interactive-tree-course {
   display: block;
