@@ -138,7 +138,7 @@ function InteractiveCurriculumTree({
     }
     const items = placement.courseIds.map((courseId) => courses.get(courseId)).filter((course): course is Course => Boolean(course));
     if (items.length === 0) return null;
-    return <div key={`cluster-${index}`} className={`interactive-tree-cluster ${placement.compact ? "compact" : ""}`} style={{ left: placement.x, top: placement.y, width: placement.width, height: placement.height }}>
+    return <div key={`cluster-${index}`} className={`interactive-tree-cluster ${items.length > 1 ? "multi-course" : "single-course"} ${placement.compact ? "compact" : ""}`} style={{ left: placement.x, top: placement.y, width: placement.width, height: placement.height }}>
       {items.map((course) => <TreeCourseButton key={course.id} course={course} compact state={treeCourseState(course.id, targetCourseIds, requiredCourseIds, recommendedCourseIds, completedCourseIds)} selected={targetCourseIds.includes(course.id)} onToggle={onToggle} />)}
     </div>;
   }
