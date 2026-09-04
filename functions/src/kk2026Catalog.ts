@@ -192,6 +192,7 @@ export const kk2026DottedTreeRelationships = [
 
   { sourceCourseId: "ait.kk.K2094", targetCourseId: "ait.kk.K2071", sourcePage: 115 },
   { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2065", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2089", sourcePage: 115 },
   { sourceCourseId: "ait.kk.K2012", targetCourseId: "ait.kk.K2014", sourcePage: 115 },
   { sourceCourseId: "ait.kk.K2049", targetCourseId: "ait.kk.K2077", sourcePage: 115 },
   { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2097", sourcePage: 115 },

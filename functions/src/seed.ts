@@ -45,7 +45,7 @@ export const kkSeedCourses: SeedCourse[] = createKk2026Courses();
 
 export function createKkSeedDataset() {
   return {
-    datasetVersionId: "ait-is-kk-entry2026-offering2026-v6-tree-relationship-corrections",
+    datasetVersionId: "ait-is-kk-entry2026-offering2026-v7-algorithm-exercise-recommendation",
     status: "published",
     sourceStatus: "attached_sources_reconciled_with_user_reviewed_tree_relationship_corrections",
     program: {

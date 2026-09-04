@@ -303,6 +303,9 @@ describe("履修計画エンジン", () => {
     const database = deriveGraduationPlan(kkDataset, ["ait.kk.K3005"]);
     expect(database.requiredCourseIds).toContain("ait.kk.K2083");
     expect(database.recommendedCourseIds).not.toContain("ait.kk.K2022");
+
+    const algorithmsExercise = deriveGraduationPlan(kkDataset, ["ait.kk.K2089"]);
+    expect(algorithmsExercise.recommendedCourseIds).toContain("ait.kk.K2022");
   });
 
   it("保存済み卒業計画から、今学期に登録可能な必要・目標科目だけを自動選択する", () => {

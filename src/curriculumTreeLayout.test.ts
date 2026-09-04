@@ -29,7 +29,7 @@ describe("KK interactive curriculum tree layout", () => {
   });
 
   it("uses a source-defined SVG route for every audited connection", () => {
-    expect(kk2026TreeCourseLinks).toHaveLength(57);
+    expect(kk2026TreeCourseLinks).toHaveLength(58);
     for (const link of kk2026TreeCourseLinks) {
       expect(link.path, `${link.sourceCourseId} -> ${link.targetCourseId}`).toMatch(/^M\s+\d+(?:\.\d+)?\s+\d+(?:\.\d+)?(?:\s|$)/);
       expect(link.path).not.toContain("NaN");

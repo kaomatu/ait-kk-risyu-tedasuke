@@ -252,6 +252,7 @@ export const kk2026TreeCourseLinks: TreeCourseLink[] = [
   { sourceCourseId: "ait.kk.K2049", targetCourseId: "ait.kk.K2077", kind: "soft", sourcePage: 115, path: "M 778 393 H 1098" },
   { sourceCourseId: "ait.kk.K1003", targetCourseId: "ait.kk.K2022", kind: "hard", sourcePage: 115, path: "M 486 475 H 517" },
   { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2065", kind: "soft", sourcePage: 115, path: "M 633 475 H 662" },
+  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2089", kind: "soft", sourcePage: 115, path: "M 633 475 H 952" },
   { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2097", kind: "soft", sourcePage: 115, path: "M 633 475 H 647 V 433 H 662" },
   { sourceCourseId: "ait.kk.K2083", targetCourseId: "ait.kk.K3005", kind: "hard", sourcePage: 115, path: "M 633 697 H 647 V 563 H 952" },
   { sourceCourseId: "ait.kk.K2065", targetCourseId: "ait.kk.K2066", kind: "hard", sourcePage: 115, path: "M 778 474 H 808" },
