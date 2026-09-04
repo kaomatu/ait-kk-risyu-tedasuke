@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { curriculumTreeCourseIdsFromTree, kkCurriculumTree, kkTreeTerms, type CurriculumTree, type TreeCoursePlacement, type TreePlacement } from "./curriculumTreeLayout";
+import { curriculumTreeCourseIdsFromTree, kkCurriculumTree, kkTreePageTwoOffset, kkTreeTerms, type CurriculumTree, type TreeCoursePlacement, type TreePlacement } from "./curriculumTreeLayout";
 import { calculateGraduationPlanProgress, deriveGraduationPlan } from "./planEngine";
 import type { Course, Dataset, GraduationPlan, StudentProfile } from "./types";
 
@@ -81,20 +81,6 @@ function treeCourseState(courseId: string, targetCourseIds: string[], requiredCo
   return "default";
 }
 
-function linkPath(source: TreeCoursePlacement, target: TreeCoursePlacement) {
-  const sourceWidth = source.width ?? 116;
-  const targetWidth = target.width ?? 116;
-  const sourceHeight = source.height ?? 34;
-  const targetHeight = target.height ?? 34;
-  const sourceToRight = source.x + sourceWidth / 2 <= target.x + targetWidth / 2;
-  const startX = sourceToRight ? source.x + sourceWidth : source.x;
-  const endX = sourceToRight ? target.x : target.x + targetWidth;
-  const startY = source.y + sourceHeight / 2;
-  const endY = target.y + targetHeight / 2;
-  const middleX = Math.round((startX + endX) / 2);
-  return `M ${startX} ${startY} H ${middleX} V ${endY} H ${endX}`;
-}
-
 function TreeCourseButton({
   course,
   placement,
@@ -110,7 +96,7 @@ function TreeCourseButton({
   onToggle: (courseId: string) => void;
   compact?: boolean;
 }) {
-  const position = placement ? { left: placement.x, top: placement.y, width: placement.width ?? 116, height: placement.height ?? 34 } : undefined;
+  const position = placement ? { left: placement.x, top: placement.y, width: placement.width, height: placement.height } : undefined;
   const stateDescription = state === "target" ? "目標として選択中" : state === "required" ? "目標のために必要" : state === "recommended" ? "取っておいた方がよい" : state === "completed" ? "修得済み" : "未選択";
   return <button
     type="button"
@@ -142,10 +128,8 @@ function InteractiveCurriculumTree({
   completedCourseIds: string[];
   onToggle: (courseId: string) => void;
 }) {
-  const placementsByCourseId = new Map(tree.placements
-    .filter((placement): placement is TreeCoursePlacement => placement.type === "course")
-    .map((placement) => [placement.courseId, placement]));
-  const links = tree.links.filter((link) => placementsByCourseId.has(link.sourceCourseId) && placementsByCourseId.has(link.targetCourseId));
+  const links = tree.links;
+  const pageTransform = (sourcePage: 114 | 115) => sourcePage === 115 ? `translate(0 ${kkTreePageTwoOffset})` : undefined;
 
   function renderPlacement(placement: TreePlacement, index: number) {
     if (placement.type === "course") {
@@ -163,10 +147,17 @@ function InteractiveCurriculumTree({
   return <section className="interactive-tree" aria-label="カリキュラムツリー: 1年から4年まで">
     <div className="interactive-tree-scroll">
       <div className="interactive-tree-canvas" style={{ height: tree.height }}>
+        <header className="interactive-tree-header" aria-label="コンピュータシステム専攻 カリキュラムツリー">
+          <h3>コンピュータシステム専攻　カリキュラムツリー</h3>
+          <div aria-label="科目区分の凡例"><b>必修科目</b><b>選択必修科目</b><b>選択科目</b></div>
+        </header>
         <div className="interactive-tree-terms" aria-label="標準履修学年・学期">{kkTreeTerms.map((term) => <div key={term.label} style={{ left: term.x, width: term.width }}>{term.label.split("\n").map((line) => <span key={line}>{line}</span>)}</div>)}</div>
         {kkTreeTerms.map((term) => <i key={term.label} className="interactive-tree-column" style={{ left: term.x }} aria-hidden="true" />)}
         {tree.areas.map((area) => <section key={`${area.title}-${area.y}`} className={`interactive-tree-area ${area.tone === "sub" ? "sub" : ""}`} style={{ left: area.x, top: area.y, width: area.width, height: area.height }} aria-label={area.title}><div><strong>{area.title}</strong>{area.description && <p>{area.description}</p>}</div></section>)}
-        <svg className="interactive-tree-links" viewBox={`0 0 ${tree.width} ${tree.height}`} role="presentation" aria-hidden="true">{tree.continuationLines.map((line, index) => <path key={`continuation-${line.kind}-${index}`} className={line.kind === "hard" ? "hard-link" : "soft-link"} d={line.path} />)}{links.map((link) => <path key={`${link.kind}-${link.sourceCourseId}-${link.targetCourseId}`} className={link.kind === "hard" ? "hard-link" : "soft-link"} d={linkPath(placementsByCourseId.get(link.sourceCourseId)!, placementsByCourseId.get(link.targetCourseId)!)} />)}</svg>
+        <svg className="interactive-tree-links" viewBox={`0 0 ${tree.width} ${tree.height}`} role="presentation" aria-hidden="true">
+          {tree.continuationLines.map((line, index) => <path key={`continuation-${line.kind}-${index}`} className={line.kind === "hard" ? "hard-link" : "soft-link"} d={line.path} transform={pageTransform(line.sourcePage)} />)}
+          {links.map((link) => <path key={`${link.kind}-${link.sourceCourseId}-${link.targetCourseId}`} className={link.kind === "hard" ? "hard-link" : "soft-link"} d={link.path} transform={pageTransform(link.sourcePage)} />)}
+        </svg>
         <div className="interactive-tree-nodes">{tree.placements.map(renderPlacement)}</div>
       </div>
     </div>

@@ -14,8 +14,9 @@ export type TreeCoursePlacement = {
   courseId: string;
   x: number;
   y: number;
-  width?: number;
-  height?: number;
+  /** 元資料上で測定した、科目枠の論理サイズ。 */
+  width: number;
+  height: number;
 };
 
 /** 元図で複数科目を一つの帯にまとめている箇所。内部の各科目は個別に選択できる。 */
@@ -63,12 +64,21 @@ export type TreeCourseLink = {
   sourceCourseId: string;
   targetCourseId: string;
   kind: TreeLinkKind;
+  /**
+   * 元資料のページ座標で記録した SVG 経路。
+   *
+   * 自動配線は使わない。これにより、画面幅や科目名の長さが変わっても
+   * 接続線の折れ方・分岐位置を資料どおりに再現できる。
+   */
+  path: string;
   sourcePage: 114 | 115;
 };
 
 /** 元図のページ境界をまたいで続く、名前付きの接続線ではない補助線。 */
 export type TreeContinuationLine = {
   kind: TreeLinkKind;
+  /** path の座標系。115頁の線は合成キャンバス上で自動的に下へ移動する。 */
+  sourcePage: 114 | 115;
   path: string;
 };
 
@@ -116,8 +126,10 @@ const foundation: CurriculumTreePage = {
     course("ait.general.G3839", 370, 409), course("ait.general.G3840", 517, 409), course("ait.general.G2840", 662, 409),
     course("ait.general.G2008", 370, 449), course("ait.general.G2009", 517, 449),
     cluster(["ait.general.G3835", "ait.general.G3836", "ait.general.G3837", "ait.general.G3838"], 370, 488, 260, 34, true),
-    course("ait.general.G2837", 662, 449), course("ait.general.G2835", 808, 449),
-    course("ait.general.G2836", 662, 474), course("ait.general.G2842", 808, 474), course("ait.general.G2834", 662, 499),
+    // この5科目は元図で25px間隔の小さな枠として並ぶため、通常枠(34px)を
+    // 使わない。個別ボタン同士が重ならないよう元資料の実寸に合わせる。
+    course("ait.general.G2837", 662, 449, 116, 22), course("ait.general.G2835", 808, 449, 116, 22),
+    course("ait.general.G2836", 662, 474, 116, 22), course("ait.general.G2842", 808, 474, 116, 22), course("ait.general.G2834", 662, 499, 116, 22),
     cluster(["ait.general.G2036", "ait.general.G2001", "ait.general.G2026", "ait.general.G2064", "ait.general.G2065", "ait.general.G2014", "ait.general.G2013", "ait.general.G2066", "ait.general.G2048", "ait.general.G2010", "ait.general.G2821", "ait.general.G2069", "ait.general.G2070"], 370, 529, 990, 34, true),
     cluster(["ait.general.G2067", "ait.general.G2822"], 370, 569, 990, 34),
 
@@ -180,7 +192,8 @@ export function curriculumTreeCourseIds(page: CurriculumTreePage) {
 
 // PDFの上下余白だけを詰める。114頁の図の末端（約974px）と115頁の図の
 // 先頭（約101px）が連続するため、科目の相対座標・学期列の縮尺は変えない。
-const pageTwoOffset = 944;
+/** 115頁を合成キャンバスで開始する Y 座標。SVG の 115頁経路にも使う。 */
+export const kkTreePageTwoOffset = 944;
 
 function offsetArea(area: TreeArea, offset: number): TreeArea {
   return { ...area, y: area.y + offset };
@@ -196,82 +209,117 @@ function offsetPlacement(placement: TreePlacement, offset: number): TreePlacemen
  */
 export const kk2026TreeCourseLinks: TreeCourseLink[] = [
   // 114頁: 言語・キャリア・基礎学力
-  { sourceCourseId: "ait.general.G1829", targetCourseId: "ait.general.G1830", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G1831", targetCourseId: "ait.general.G3834", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3834", targetCourseId: "ait.general.G3832", kind: "soft", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3834", targetCourseId: "ait.general.G3845", kind: "soft", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3832", targetCourseId: "ait.general.G3833", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3845", targetCourseId: "ait.general.G3846", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3843", targetCourseId: "ait.general.G3844", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3844", targetCourseId: "ait.general.G2838", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3841", targetCourseId: "ait.general.G3842", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3842", targetCourseId: "ait.general.G2839", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3839", targetCourseId: "ait.general.G3840", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G3840", targetCourseId: "ait.general.G2840", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.general.G2008", targetCourseId: "ait.general.G2009", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K1022", targetCourseId: "ait.kk.K1023", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K1023", targetCourseId: "ait.kk.K2113", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K1019", targetCourseId: "ait.kk.K2087", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K2087", targetCourseId: "ait.kk.K1013", kind: "soft", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K2058", targetCourseId: "ait.kk.K2059", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K2059", targetCourseId: "ait.kk.K2063", kind: "soft", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K1020", targetCourseId: "ait.kk.K2062", kind: "soft", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K2060", targetCourseId: "ait.kk.K2061", kind: "hard", sourcePage: 114 },
-  { sourceCourseId: "ait.kk.K1005", targetCourseId: "ait.kk.K2016", kind: "hard", sourcePage: 114 },
+  { sourceCourseId: "ait.general.G1829", targetCourseId: "ait.general.G1830", kind: "hard", sourcePage: 114, path: "M 486 230 H 517" },
+  { sourceCourseId: "ait.general.G1831", targetCourseId: "ait.general.G3834", kind: "hard", sourcePage: 114, path: "M 486 269 H 517" },
+  { sourceCourseId: "ait.general.G3834", targetCourseId: "ait.general.G3832", kind: "soft", sourcePage: 114, path: "M 633 269 H 662" },
+  { sourceCourseId: "ait.general.G3834", targetCourseId: "ait.general.G3845", kind: "soft", sourcePage: 114, path: "M 633 269 H 647 V 308 H 662" },
+  { sourceCourseId: "ait.general.G3832", targetCourseId: "ait.general.G3833", kind: "hard", sourcePage: 114, path: "M 778 269 H 808" },
+  { sourceCourseId: "ait.general.G3845", targetCourseId: "ait.general.G3846", kind: "hard", sourcePage: 114, path: "M 778 308 H 808" },
+  { sourceCourseId: "ait.general.G3843", targetCourseId: "ait.general.G3844", kind: "hard", sourcePage: 114, path: "M 486 346 H 517" },
+  { sourceCourseId: "ait.general.G3844", targetCourseId: "ait.general.G2838", kind: "hard", sourcePage: 114, path: "M 633 346 H 662" },
+  { sourceCourseId: "ait.general.G3841", targetCourseId: "ait.general.G3842", kind: "hard", sourcePage: 114, path: "M 486 386 H 517" },
+  { sourceCourseId: "ait.general.G3842", targetCourseId: "ait.general.G2839", kind: "hard", sourcePage: 114, path: "M 633 386 H 662" },
+  { sourceCourseId: "ait.general.G3839", targetCourseId: "ait.general.G3840", kind: "hard", sourcePage: 114, path: "M 486 426 H 517" },
+  { sourceCourseId: "ait.general.G3840", targetCourseId: "ait.general.G2840", kind: "hard", sourcePage: 114, path: "M 633 426 H 662" },
+  { sourceCourseId: "ait.general.G2008", targetCourseId: "ait.general.G2009", kind: "hard", sourcePage: 114, path: "M 486 466 H 517" },
+  { sourceCourseId: "ait.kk.K1022", targetCourseId: "ait.kk.K1023", kind: "hard", sourcePage: 114, path: "M 486 684 H 662" },
+  { sourceCourseId: "ait.kk.K1023", targetCourseId: "ait.kk.K2113", kind: "hard", sourcePage: 114, path: "M 778 684 H 1098" },
+  { sourceCourseId: "ait.kk.K1019", targetCourseId: "ait.kk.K2087", kind: "hard", sourcePage: 114, path: "M 633 824 H 662" },
+  { sourceCourseId: "ait.kk.K2087", targetCourseId: "ait.kk.K1013", kind: "soft", sourcePage: 114, path: "M 778 824 H 808" },
+  { sourceCourseId: "ait.kk.K2058", targetCourseId: "ait.kk.K2059", kind: "hard", sourcePage: 114, path: "M 486 864 H 517" },
+  { sourceCourseId: "ait.kk.K2059", targetCourseId: "ait.kk.K2063", kind: "soft", sourcePage: 114, path: "M 633 864 H 790 V 943 H 808" },
+  { sourceCourseId: "ait.kk.K1020", targetCourseId: "ait.kk.K2062", kind: "soft", sourcePage: 114, path: "M 486 904 H 808" },
+  { sourceCourseId: "ait.kk.K2060", targetCourseId: "ait.kk.K2061", kind: "hard", sourcePage: 114, path: "M 486 943 H 517" },
+  { sourceCourseId: "ait.kk.K1005", targetCourseId: "ait.kk.K2016", kind: "hard", sourcePage: 114, path: "M 486 983 H 517" },
 
   // 115頁: 専門基礎・専門技術
-  { sourceCourseId: "ait.kk.K2094", targetCourseId: "ait.kk.K2071", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2017", targetCourseId: "ait.kk.K2018", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2012", targetCourseId: "ait.kk.K2014", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2049", targetCourseId: "ait.kk.K2077", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K1003", targetCourseId: "ait.kk.K2022", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2065", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2097", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K3005", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2065", targetCourseId: "ait.kk.K2066", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2066", targetCourseId: "ait.kk.K2089", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2095", targetCourseId: "ait.kk.K2037", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K1007", targetCourseId: "ait.kk.K2070", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2070", targetCourseId: "ait.kk.K2091", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K1007", targetCourseId: "ait.kk.K3001", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2083", targetCourseId: "ait.kk.K3002", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K3005", targetCourseId: "ait.kk.K3002", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2035", targetCourseId: "ait.kk.K2068", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2068", targetCourseId: "ait.kk.K2069", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2069", targetCourseId: "ait.kk.K1015", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2069", targetCourseId: "ait.kk.K3004", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2118", targetCourseId: "ait.kk.K3004", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K1015", targetCourseId: "ait.kk.K3003", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K3004", targetCourseId: "ait.kk.K3003", kind: "soft", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K3084", targetCourseId: "ait.kk.K2085", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K2085", targetCourseId: "ait.kk.K1016", kind: "hard", sourcePage: 115 },
-  { sourceCourseId: "ait.kk.K1016", targetCourseId: "ait.kk.K1018", kind: "hard", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2094", targetCourseId: "ait.kk.K2071", kind: "soft", sourcePage: 115, path: "M 486 132 H 808" },
+  { sourceCourseId: "ait.kk.K2017", targetCourseId: "ait.kk.K2018", kind: "hard", sourcePage: 115, path: "M 1068 283 H 1098" },
+  { sourceCourseId: "ait.kk.K2012", targetCourseId: "ait.kk.K2014", kind: "soft", sourcePage: 115, path: "M 1068 330 H 1098" },
+  { sourceCourseId: "ait.kk.K2049", targetCourseId: "ait.kk.K2077", kind: "soft", sourcePage: 115, path: "M 778 393 H 1098" },
+  { sourceCourseId: "ait.kk.K1003", targetCourseId: "ait.kk.K2022", kind: "hard", sourcePage: 115, path: "M 486 475 H 517" },
+  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2065", kind: "soft", sourcePage: 115, path: "M 633 475 H 662" },
+  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2097", kind: "soft", sourcePage: 115, path: "M 633 475 H 647 V 433 H 662" },
+  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K3005", kind: "soft", sourcePage: 115, path: "M 633 475 H 647 V 563 H 952" },
+  { sourceCourseId: "ait.kk.K2065", targetCourseId: "ait.kk.K2066", kind: "hard", sourcePage: 115, path: "M 778 474 H 808" },
+  { sourceCourseId: "ait.kk.K2066", targetCourseId: "ait.kk.K2089", kind: "soft", sourcePage: 115, path: "M 924 474 H 952" },
+  { sourceCourseId: "ait.kk.K2095", targetCourseId: "ait.kk.K2037", kind: "hard", sourcePage: 115, path: "M 1068 433 H 1098" },
+  { sourceCourseId: "ait.kk.K1007", targetCourseId: "ait.kk.K2070", kind: "hard", sourcePage: 115, path: "M 778 620 H 808" },
+  { sourceCourseId: "ait.kk.K2070", targetCourseId: "ait.kk.K2091", kind: "hard", sourcePage: 115, path: "M 924 620 H 952" },
+  { sourceCourseId: "ait.kk.K1007", targetCourseId: "ait.kk.K3001", kind: "soft", sourcePage: 115, path: "M 778 620 H 797 V 663 H 952" },
+  { sourceCourseId: "ait.kk.K2083", targetCourseId: "ait.kk.K3002", kind: "hard", sourcePage: 115, path: "M 633 697 H 1098" },
+  { sourceCourseId: "ait.kk.K3005", targetCourseId: "ait.kk.K3002", kind: "soft", sourcePage: 115, path: "M 1068 563 H 1082 V 697 H 1098" },
+  { sourceCourseId: "ait.kk.K2035", targetCourseId: "ait.kk.K2068", kind: "soft", sourcePage: 115, path: "M 486 754 H 662" },
+  { sourceCourseId: "ait.kk.K2068", targetCourseId: "ait.kk.K2069", kind: "hard", sourcePage: 115, path: "M 778 754 H 808" },
+  { sourceCourseId: "ait.kk.K2069", targetCourseId: "ait.kk.K1015", kind: "soft", sourcePage: 115, path: "M 924 754 H 952" },
+  { sourceCourseId: "ait.kk.K2069", targetCourseId: "ait.kk.K3004", kind: "soft", sourcePage: 115, path: "M 924 754 H 938 V 796 H 952" },
+  { sourceCourseId: "ait.kk.K2118", targetCourseId: "ait.kk.K3004", kind: "soft", sourcePage: 115, path: "M 924 796 H 952" },
+  { sourceCourseId: "ait.kk.K1015", targetCourseId: "ait.kk.K3003", kind: "soft", sourcePage: 115, path: "M 1068 754 H 1098" },
+  { sourceCourseId: "ait.kk.K3004", targetCourseId: "ait.kk.K3003", kind: "soft", sourcePage: 115, path: "M 1068 796 H 1082 V 754 H 1098" },
+  { sourceCourseId: "ait.kk.K3084", targetCourseId: "ait.kk.K2085", kind: "hard", sourcePage: 115, path: "M 778 850 H 808" },
+  { sourceCourseId: "ait.kk.K2085", targetCourseId: "ait.kk.K1016", kind: "hard", sourcePage: 115, path: "M 924 850 H 952" },
+  { sourceCourseId: "ait.kk.K1016", targetCourseId: "ait.kk.K1018", kind: "hard", sourcePage: 115, path: "M 1212 850 H 1242" },
 ];
 
 /**
- * 114頁の下端から115頁の上端へ伸びる、元図に描かれている三本の継続線。
- * 線は科目箱を経由せず紙面外へ出るため、科目間の登録条件には混在させない。
+ * 114頁の下端と115頁の上端で続く、元図上の名前を持たない幹線。
+ *
+ * 先修条件そのものではないため科目データには混在させない。各ページの
+ * 元座標で記録し、合成時だけ115頁を kkTreePageTwoOffset 分だけ移動する。
  */
 const kk2026TreeContinuationLines: TreeContinuationLine[] = [
-  // 114頁の「線形代数Ⅱ／情報数学Ⅱ」側から、115頁の数理系へ続く実線。
-  { kind: "hard", path: "M 640 943 V 1227 H 808" },
-  { kind: "hard", path: "M 640 983 V 1274 H 662" },
-  // 114頁の物理系から下へ伸び、115頁中央の縦幹へ続く実線。
-  { kind: "hard", path: "M 784 824 V 1735" },
-  // 114頁のデータサイエンス基礎処理側から続く破線。
-  { kind: "soft", path: "M 799 904 V 1178 H 938 V 1227 H 952" },
+  // 114頁の下端: 線形代数Ⅱ・物理系から紙面外へ続く3本の実線。
+  { kind: "hard", sourcePage: 114, path: "M 640 943 V 1064" },
+  { kind: "hard", sourcePage: 114, path: "M 782 824 V 1064" },
+  { kind: "hard", sourcePage: 114, path: "M 790 824 V 1064" },
+  // 114頁のデータサイエンス基礎数理から続く破線。
+  { kind: "soft", sourcePage: 114, path: "M 720 904 V 1064" },
+  { kind: "soft", sourcePage: 114, path: "M 800 824 V 1064" },
+
+  // 115頁の上端: 上記の幹線を、資料と同じ X 座標・太さで受ける。
+  { kind: "hard", sourcePage: 115, path: "M 637 0 V 690" },
+  { kind: "hard", sourcePage: 115, path: "M 780 0 V 790" },
+  { kind: "hard", sourcePage: 115, path: "M 789 0 V 790" },
+  { kind: "soft", sourcePage: 115, path: "M 797 0 V 230 H 938 V 286" },
+  { kind: "soft", sourcePage: 115, path: "M 647 432 V 558 H 1082 V 697" },
 ];
 
 export const kkCurriculumTree: CurriculumTree = {
   id: "kk-2026-combined",
   width: 1506,
-  height: pageTwoOffset + specialization.height,
-  areas: [...foundation.areas, ...specialization.areas.map((area) => offsetArea(area, pageTwoOffset))],
-  placements: [...foundation.placements, ...specialization.placements.map((placement) => offsetPlacement(placement, pageTwoOffset))],
+  height: kkTreePageTwoOffset + specialization.height,
+  areas: [...foundation.areas, ...specialization.areas.map((area) => offsetArea(area, kkTreePageTwoOffset))],
+  placements: [...foundation.placements, ...specialization.placements.map((placement) => offsetPlacement(placement, kkTreePageTwoOffset))],
   links: kk2026TreeCourseLinks,
   continuationLines: kk2026TreeContinuationLines,
 };
 
 export function curriculumTreeCourseIdsFromTree(tree: CurriculumTree) {
   return tree.placements.flatMap((placement) => placement.type === "course" ? [placement.courseId] : placement.courseIds);
+}
+
+export type TreeCourseBounds = {
+  courseId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+/**
+ * 選択可能な各科目ボタンの実際の矩形。帯状に表示する科目も、クリック領域
+ * ごとに分解して返す。テストで重なりを検出するため、描画側と同じ算出式にする。
+ */
+export function curriculumTreeCourseBounds(tree: CurriculumTree): TreeCourseBounds[] {
+  return tree.placements.flatMap((placement) => {
+    if (placement.type === "course") return [{ courseId: placement.courseId, x: placement.x, y: placement.y, width: placement.width, height: placement.height }];
+    const itemWidth = placement.width / placement.courseIds.length;
+    return placement.courseIds.map((courseId, index) => ({
+      courseId,
+      x: placement.x + itemWidth * index,
+      y: placement.y,
+      width: itemWidth,
+      height: placement.height,
+    }));
+  });
 }
