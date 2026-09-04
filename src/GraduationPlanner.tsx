@@ -145,6 +145,7 @@ export function GraduationPlanner({
     ...derived,
     savedAt: savedPlan?.savedAt ?? "",
   }), [dataset, derived, savedPlan?.savedAt]);
+  const savedPlanNeedsRefresh = Boolean(savedPlan && savedPlan.datasetVersionId !== dataset.datasetVersionId);
   const progress = useMemo(() => calculateGraduationPlanProgress(dataset, profile, derived), [dataset, profile, derived]);
   const selectedRequirementDefinition = graduationRequirements.find((item) => item.key === selectedRequirement) ?? null;
   const selectedRequirementCourses = useMemo(() => selectedRequirement ? coursesForRequirement(dataset, selectedRequirement) : [], [dataset, selectedRequirement]);
@@ -162,6 +163,8 @@ export function GraduationPlanner({
     <section className="planner-header"><div><p className="eyebrow">TOOL 3 / GRADUATION PLAN</p><h1>卒業までの目標を、科目のつながりから決める。</h1><p>取りたい科目を選ぶと、実線の先修条件と破線の推奨順序を辿り、卒業までに見通したい科目を3つの区分に整理します。保存後、ツール2は今学期に該当する科目を自動選択します。</p></div><div className="planner-actions"><button className="primary-button" disabled={busy || draftPlan.targetCourseIds.length === 0} onClick={() => void save()}>{busy ? "保存中…" : "卒業計画を保存"}</button></div></section>
 
     <section className="graduation-intro section-card"><div><strong>対象の所属</strong><span>{dataset.program.faculty} / {dataset.program.department} / {dataset.program.name}</span></div><div><strong>保存状態</strong><span>{savedPlan ? `保存済み（${new Date(savedPlan.savedAt).toLocaleString("ja-JP")}）` : "未保存"}</span></div><div><strong>選択方法</strong><span>元図で位置とつながりを確認し、検索欄から目標に追加・解除</span></div></section>
+
+    {savedPlanNeedsRefresh && <section className="notice graduation-plan-notice" role="status"><strong>カリキュラムデータが更新されています</strong><p>保存済みの目標科目から、実線・破線の関係を最新データで再計算済みです。「卒業計画を保存」を押すと、ツール2にも最新の結果が反映されます。</p></section>}
 
     <CurriculumTreeReference dataset={dataset} profile={profile} targetCourseIds={derived.targetCourseIds} onToggle={toggleTarget} />
 

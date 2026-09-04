@@ -140,12 +140,14 @@ export default function App() {
     setPlan(null);
   }
 
-  async function seedDataset() {
+  async function seedDataset(mode: "initial" | "reapply" = "initial") {
     try {
       setLoadingDataset(true);
       const next = await createInitialKkDataset();
       setDataset(next);
-      setMessage("初期データセットを作成しました。ツール1でレビュー済みデータへ置き換えられます。");
+      setMessage(mode === "initial"
+        ? "初期データセットを作成しました。ツール1でレビュー済みデータへ置き換えられます。"
+        : "KK 2026 のレビュー済みデータを再適用しました。個人の保存データは変更していません。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "初期データセットの作成に失敗しました。");
     } finally {
@@ -227,7 +229,7 @@ export default function App() {
         {loadingDataset && <div className="inline-loading">データを読み込んでいます…</div>}
         {!loadingDataset && !dataset && !localPreview && <DatasetSetup onSeed={seedDataset} />}
         {dataset && tab === "overview" && <Overview dataset={dataset} profile={profile} progress={planProgress} onOpenPlanner={() => setTab("planner")} />}
-        {dataset && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} />}
+        {dataset && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} onReapplyReviewedDataset={() => seedDataset("reapply")} />}
         {dataset && tab === "graduation_planner" && <GraduationPlanner dataset={dataset} profile={profile} savedPlan={graduationPlan} busy={graduationPlanBusy} onSave={saveCurrentGraduationPlan} />}
         {dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} graduationPlan={graduationPlan} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} snapshots={snapshots} snapshotBusy={snapshotBusy} onSaveSnapshot={saveNumberedProfile} onLoadSnapshot={loadNumberedProfile} />}
         {dataset && tab === "rules" && <Rules dataset={dataset} />}
@@ -336,7 +338,7 @@ function ProgressLine({ label, value, target }: { label: string; value: number; 
   return <div className="progress-line"><div className="progress-title"><span>{label}</span><strong>{value} / {target} 単位</strong></div><div className="bar"><span style={{ width: `${percent}%` }} /></div></div>;
 }
 
-function IngestionTool({ localPreview, onMessage }: { localPreview: boolean; onMessage: (message: string) => void }) {
+function IngestionTool({ localPreview, onMessage, onReapplyReviewedDataset }: { localPreview: boolean; onMessage: (message: string) => void; onReapplyReviewedDataset: () => Promise<void> }) {
   const [file, setFile] = useState<File | null>(null);
   const [documentKind, setDocumentKind] = useState("curriculum_table");
   const [busy, setBusy] = useState(false);
@@ -379,6 +381,11 @@ function IngestionTool({ localPreview, onMessage }: { localPreview: boolean; onM
         <ol><li>原本のハッシュ・資料種別・対象専攻を記録</li><li>AIが科目・時間割・要件・線の候補をJSONで抽出</li><li>科目コード、単位、実線前提、要件合計を検証</li><li>不明箇所を確認してデータセットを公開</li></ol>
         <p className="callout">現在は、AI APIキーが未設定のため、ジョブ作成後に資料本文を外部へ送信しません。キー設定後はCloud Functions内でのみAI APIへ送ります。</p>
       </article>
+    </section>
+    <section className="section-card dataset-reapply-card">
+      <h2>3. レビュー済みデータを再適用</h2>
+      <p>コンピュータシステム専攻・2026年4月入学者向けのレビュー済み初期データを、公開データセットに再適用します。個人の修得履歴・保存済み履修案・卒業計画は変更しません。</p>
+      <button className="secondary-button" disabled={busy} onClick={() => void onReapplyReviewedDataset()}>KK 2026 のレビュー済みデータを再適用</button>
     </section>
     {job && <section className="section-card job-result"><span className="pill warning">{job.status}</span><h2>ジョブを作成しました</h2><p>ジョブID: <code>{job.jobId}</code></p><p>{job.note}</p></section>}
     <section className="section-card"><div className="section-heading"><div><p className="eyebrow">OUTPUT CONTRACT</p><h2>公開前に必ず保存する情報</h2></div></div><div className="contract-grid"><code>Course<br />正式名称・科目コード・単位・必選区分</code><code>Offering<br />年度・学期・クラス・曜日時限・抽選</code><code>Requirement<br />進級・卒業・上限・科目群</code><code>Evidence<br />ページ・座標・原文・信頼度</code></div></section>

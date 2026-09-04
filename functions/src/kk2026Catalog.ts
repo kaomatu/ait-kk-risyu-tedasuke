@@ -172,6 +172,62 @@ const curriculumCourses: CourseDefinition[] = [
   general("G2833", "海外留学英語", 4, "non_counting", ["english"], { countForProgression: false, countForGraduation: false }),
 ];
 
+/**
+ * カリキュラムツリーの「連携・関連科目」（破線）を、後の科目から前の科目へ辿れる形で記録する。
+ *
+ * - sourceCourseId: 先に履修しておくとよい科目
+ * - targetCourseId: 目標として選んだときに sourceCourseId を「取っておいた方がよい科目」として提示する科目
+ * - sourcePage: 添付のコンピュータシステム専攻カリキュラムツリーの資料ページ
+ *
+ * 実線の前提条件は hardPrerequisites で別管理する。ここには、元図で破線として確認できる対応だけを登録する。
+ */
+export const kk2026DottedTreeRelationships = [
+  { sourceCourseId: "ait.general.G3834", targetCourseId: "ait.general.G3832", sourcePage: 114 },
+  { sourceCourseId: "ait.general.G3834", targetCourseId: "ait.general.G3845", sourcePage: 114 },
+  { sourceCourseId: "ait.kk.K2087", targetCourseId: "ait.kk.K1013", sourcePage: 114 },
+  { sourceCourseId: "ait.kk.K1020", targetCourseId: "ait.kk.K2062", sourcePage: 114 },
+  { sourceCourseId: "ait.kk.K2059", targetCourseId: "ait.kk.K2063", sourcePage: 114 },
+
+  { sourceCourseId: "ait.kk.K2094", targetCourseId: "ait.kk.K2071", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2044", targetCourseId: "ait.kk.K2017", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2012", targetCourseId: "ait.kk.K2014", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2049", targetCourseId: "ait.kk.K2077", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K2097", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2022", targetCourseId: "ait.kk.K3005", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2066", targetCourseId: "ait.kk.K2089", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K1007", targetCourseId: "ait.kk.K3001", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K3005", targetCourseId: "ait.kk.K3002", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2035", targetCourseId: "ait.kk.K2068", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2069", targetCourseId: "ait.kk.K1015", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2069", targetCourseId: "ait.kk.K3004", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K2118", targetCourseId: "ait.kk.K3004", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K1015", targetCourseId: "ait.kk.K3003", sourcePage: 115 },
+  { sourceCourseId: "ait.kk.K3004", targetCourseId: "ait.kk.K3003", sourcePage: 115 },
+] as const;
+
+function addDottedTreeRelationships(courses: CourseDefinition[]) {
+  const courseIds = new Set(courses.map((course) => course.id));
+  const prerequisitesByTarget = new Map<string, string[]>();
+
+  for (const relationship of kk2026DottedTreeRelationships) {
+    if (!courseIds.has(relationship.sourceCourseId) || !courseIds.has(relationship.targetCourseId)) {
+      throw new Error(`カリキュラムツリー破線の科目IDが見つかりません: ${relationship.sourceCourseId} -> ${relationship.targetCourseId}`);
+    }
+    const prerequisites = prerequisitesByTarget.get(relationship.targetCourseId) ?? [];
+    prerequisites.push(relationship.sourceCourseId);
+    prerequisitesByTarget.set(relationship.targetCourseId, prerequisites);
+  }
+
+  return courses.map((course) => {
+    const dottedPrerequisites = prerequisitesByTarget.get(course.id) ?? [];
+    if (dottedPrerequisites.length === 0) return course;
+    return {
+      ...course,
+      softPrerequisites: [...new Set([...(course.softPrerequisites ?? []), ...dottedPrerequisites])],
+    };
+  });
+}
+
 function normalizeName(value: string) {
   return value
     .replace(/[（）()]/g, "")
@@ -305,7 +361,7 @@ export function createKk2026Courses(): SeedCourse[] {
   const lottery = parseLedger(lotteryOfferingLedger, true, byCode, byName);
   const unknownDefinitions = [...normal.unknownCourses, ...lottery.unknownCourses]
     .filter((course, index, all) => all.findIndex((candidate) => candidate.id === course.id) === index);
-  const allDefinitions = [...curriculumCourses, ...unknownDefinitions];
+  const allDefinitions = addDottedTreeRelationships([...curriculumCourses, ...unknownDefinitions]);
   const offeringsByCourse = new Map<string, RawOffering[]>();
   for (const source of [normal.offeringsByCourse, lottery.offeringsByCourse]) {
     for (const [courseId, offerings] of source) offeringsByCourse.set(courseId, [...(offeringsByCourse.get(courseId) ?? []), ...offerings]);
