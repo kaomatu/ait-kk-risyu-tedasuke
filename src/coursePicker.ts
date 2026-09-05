@@ -60,6 +60,22 @@ export function cycleFutureCourseIntent(profile: StudentProfile, courseId: strin
 }
 
 /**
+ * 「この年次で選択済み」の時間割プレビュー専用のプロフィールを作る。
+ * 一覧にある今期開講科目だけを仮配置し、別年次の選択や将来目標の先修条件を
+ * 混ぜない。実際の履修案を生成するときのプロフィールは変更しない。
+ */
+export function profileForPickerSchedulePreview(profile: StudentProfile, courseIds: string[]): StudentProfile {
+  const selected = new Set(courseIds);
+  return {
+    ...profile,
+    wanted: Object.fromEntries(Object.entries(profile.wanted).filter(([id]) => selected.has(id))),
+    futureGoalCourseIds: [],
+    autoRequiredCourseIds: profile.autoRequiredCourseIds.filter((id) => selected.has(id)),
+    autoGraduationPlanWanted: Object.fromEntries(Object.entries(profile.autoGraduationPlanWanted ?? {}).filter(([id]) => selected.has(id))),
+  };
+}
+
+/**
  * ツール2の科目選択欄に表示する科目を返す。
  * 通常は「今期に開講する、指定年次の科目」へ絞るが、既に選んだ科目は
  * 配当学期外でも残して、利用者が解除・確認できるようにする。

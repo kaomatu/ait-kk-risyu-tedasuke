@@ -136,3 +136,8 @@ input, select { min-height: 44px; border: 1px solid #d7ddea; border-radius: 10px
 
 @media (max-width: 960px) { .graduation-intro, .plan-classification-grid { grid-template-columns: 1fr; }.graduation-requirement-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.requirement-course-list { grid-template-columns: 1fr; }.tree-course-picker { grid-template-columns: 1fr; }.tree-course-picker-results { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 @media (max-width: 650px) { .graduation-requirement-grid, .tree-course-picker-results { grid-template-columns: 1fr; }.curriculum-reference-card { padding-left: 14px; padding-right: 14px; }.curriculum-reference-pages figure { padding: 7px; }.graduation-intro { gap: 12px; }.requirement-course-row { align-items: flex-start; flex-direction: column; }.requirement-course-row .secondary-button { width: 100%; } }
+
+.course-picker-selected .plan-timetable { margin: 15px 0 0; }
+.course-picker-selected .plan-timetable-heading { align-items: start; }
+.course-picker-preview-note { margin: 11px 1px 0 !important; color: #61708a !important; font-size: 12px !important; line-height: 1.6 !important; }
+.course-picker-preview-note.warning { color: #975913 !important; }

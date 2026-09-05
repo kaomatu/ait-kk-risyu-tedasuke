@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterPlannerCoursePicker, selectedPlannerCourseIds } from "./coursePicker";
+import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds } from "./coursePicker";
 import type { Course, StudentProfile } from "./types";
 
 const profile: StudentProfile = {
@@ -73,5 +73,19 @@ describe("ツール2の科目選択欄の絞り込み", () => {
     const next = cycleFutureCourseIntent({ ...profile, futureGoalCourseIds: ["fall"] }, "fall");
     expect(next.futureGoalCourseIds).toEqual([]);
     expect(selectedPlannerCourseIds({ ...profile, ...next })).not.toContain("fall");
+  });
+
+  it("選択済み科目の時間割プレビューには、表示年次で今期に開講する科目だけを渡す", () => {
+    const preview = profileForPickerSchedulePreview({
+      ...profile,
+      wanted: { spring: "must", fall: "prefer" },
+      futureGoalCourseIds: ["second"],
+      autoRequiredCourseIds: ["spring", "fall"],
+      autoGraduationPlanWanted: { spring: "must", fall: "prefer" },
+    }, ["spring"]);
+    expect(preview.wanted).toEqual({ spring: "must" });
+    expect(preview.autoRequiredCourseIds).toEqual(["spring"]);
+    expect(preview.futureGoalCourseIds).toEqual([]);
+    expect(preview.autoGraduationPlanWanted).toEqual({ spring: "must" });
   });
 });

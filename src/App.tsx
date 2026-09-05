@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loginWithPassphrase, logout, saveGraduationPlan, saveProfileSnapshot, subscribeToAuth } from "./firebase";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
-import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterPlannerCoursePicker, selectedPlannerCourseIds, type CoursePickerTermScope } from "./coursePicker";
+import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds, type CoursePickerTermScope } from "./coursePicker";
 import { createPlanScheduleSegments } from "./planSchedule";
 import { GraduationPlanner } from "./GraduationPlanner";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type GraduationPlan, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
@@ -425,6 +425,18 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
   }), [dataset.courses, pickerGrade, pickerQuery, pickerTermScope, profile, selectedPickerCourseIds]);
   const selectedPickerCourses = pickerCourses.filter((course) => selectedPickerCourseIds.includes(course.id));
   const unselectedPickerCourses = pickerCourses.filter((course) => !selectedPickerCourseIds.includes(course.id));
+  const selectedPickerOfferedCourseIds = selectedPickerCourses
+    .filter((course) => course.offerings.some((offering) => canUseOffering(course, offering, profile)))
+    .map((course) => course.id);
+  const selectedPickerFutureCourses = selectedPickerCourses.filter((course) => !selectedPickerOfferedCourseIds.includes(course.id));
+  const selectedPickerPreviewProfile = useMemo(
+    () => profileForPickerSchedulePreview(profile, selectedPickerOfferedCourseIds),
+    [profile, selectedPickerOfferedCourseIds],
+  );
+  const selectedPickerPreviewPlan = useMemo(
+    () => generatePlan(dataset, selectedPickerPreviewProfile),
+    [dataset, selectedPickerPreviewProfile],
+  );
   const pickerGroups: Array<{ category: Course["category"]; label: string; courses: Course[] }> = [
     { category: "specialized", label: "専門教育科目", courses: unselectedPickerCourses.filter((course) => course.category === "specialized") },
     { category: "general", label: "総合教育科目", courses: unselectedPickerCourses.filter((course) => course.category === "general") },
@@ -519,7 +531,7 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
             <label>科目名・コードで絞り込み<input value={pickerQuery} onChange={(event) => setPickerQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label>
           </section>
           <p className="course-picker-count">{pickerGrade}年次・{pickerTermScope === "current" ? "今期に開講" : "配当学期すべて"}の表示対象: <b>{pickerCourses.length}科目</b>{pickerQuery.trim() ? "（検索結果）" : ""}</p>
-          {selectedPickerCourses.length > 0 && <section className="course-picker-selected"><h3>この年次で選択済み・自動選択の科目</h3><div className="course-picker-cards">{selectedPickerCourses.map(courseCard)}</div></section>}
+          {selectedPickerCourses.length > 0 && <section className="course-picker-selected"><h3>この年次で選択済み・自動選択の科目</h3><div className="course-picker-cards">{selectedPickerCourses.map(courseCard)}</div><PlanTimetable plan={selectedPickerPreviewPlan} profile={selectedPickerPreviewProfile} headingId="selected-course-timetable-title" eyebrow="SELECTED COURSE SCHEDULE" title="選択中の時間割（仮配置）" description="現在の選択から組めるクラスの組み合わせを、曜日・時限で仮表示しています。履修案を生成すると、同じ形式で最終候補を確認できます。" emptyMessage="この年次で今期に開講する選択済み科目がないため、時間割は表示されません。" />{selectedPickerFutureCourses.length > 0 && <p className="course-picker-preview-note">今期は未開講の将来目標は時間割に含めていません：{selectedPickerFutureCourses.map((course) => course.name).join("、")}</p>}{selectedPickerPreviewPlan.rejected.length > 0 && <p className="course-picker-preview-note warning">{selectedPickerPreviewPlan.rejected.length}科目は、前提条件・上限・時間の条件により仮配置できていません。履修案を生成すると理由を確認できます。</p>}</section>}
           <div className="course-picker-groups">{pickerGroups.map((group) => <details key={group.category} className="course-picker-group" open={expandedPickerCategories[group.category]} onToggle={(event) => {
             const isOpen = event.currentTarget.open;
             setExpandedPickerCategories((current) => ({ ...current, [group.category]: isOpen }));
@@ -576,15 +588,31 @@ function PlanResultView({ dataset, profile, plan, recommendations, onAddRecommen
   </section>;
 }
 
-function PlanTimetable({ plan, profile }: { plan: PlanResult; profile: StudentProfile }) {
+function PlanTimetable({
+  plan,
+  profile,
+  headingId = "plan-timetable-title",
+  eyebrow = "WEEKLY SCHEDULE",
+  title = "時間割で確認",
+  description = "選ばれたクラスを曜日・時限ごとに表示しています。",
+  emptyMessage = "履修案に選ばれた科目がないため、時間割は表示されません。",
+}: {
+  plan: PlanResult;
+  profile: StudentProfile;
+  headingId?: string;
+  eyebrow?: string;
+  title?: string;
+  description?: string;
+  emptyMessage?: string;
+}) {
   const segments = createPlanScheduleSegments(plan.selected);
   const priorityClass = (courseId: string, priority: "must" | "prefer" | "suggested") => {
     if (profile.autoRequiredCourseIds.includes(courseId)) return "required";
     return priority;
   };
 
-  return <section className="plan-timetable" aria-labelledby="plan-timetable-title">
-    <div className="plan-timetable-heading"><div><p className="eyebrow">WEEKLY SCHEDULE</p><h3 id="plan-timetable-title">時間割で確認</h3></div><p>選ばれたクラスを曜日・時限ごとに表示しています。</p></div>
+  return <section className="plan-timetable" aria-labelledby={headingId}>
+    <div className="plan-timetable-heading"><div><p className="eyebrow">{eyebrow}</p><h3 id={headingId}>{title}</h3></div><p>{description}</p></div>
     {segments.length > 0 ? <div className="plan-timetable-scroll"><div className="plan-timetable-grid">
       <span className="plan-timetable-corner" aria-hidden="true" />
       {weekdays.map((day, index) => <span className="plan-timetable-day" style={{ gridColumn: index + 2 }} key={day}>{weekdayLabels[day]}</span>)}
@@ -592,7 +620,7 @@ function PlanTimetable({ plan, profile }: { plan: PlanResult; profile: StudentPr
       {segments.map((segment, index) => <article className={`plan-timetable-course ${priorityClass(segment.course.id, segment.priority)}${segment.offering.lottery ? " lottery" : ""}`} style={{ gridColumn: weekdays.indexOf(segment.offering.weekday) + 2, gridRow: `${segment.startPeriod + 1} / span ${segment.span}` }} key={`${segment.offering.id}-${segment.startPeriod}-${index}`} aria-label={`${weekdayLabels[segment.offering.weekday]}曜日${segment.startPeriod}限、${segment.course.name}${segment.offering.lottery ? "、抽選科目" : ""}`}>
         <strong>{segment.course.name}</strong><small>{segment.offering.classCode}{segment.offering.lottery ? " · 抽選" : ""}</small>
       </article>)}
-    </div></div> : <p className="plan-timetable-empty-message">履修案に選ばれた科目がないため、時間割は表示されません。</p>}
+    </div></div> : <p className="plan-timetable-empty-message">{emptyMessage}</p>}
     <div className="plan-timetable-legend"><span className="required">必修・固定</span><span className="must">必ず取りたい</span><span className="prefer">できれば取りたい</span><span className="suggested">候補</span><span className="lottery">抽選</span></div>
   </section>;
 }
