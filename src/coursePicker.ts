@@ -77,18 +77,20 @@ export function profileForPickerSchedulePreview(profile: StudentProfile, courseI
 
 /**
  * ツール2の科目選択欄に表示する科目を返す。
- * 通常は「今期に開講する、指定年次の科目」へ絞るが、既に選んだ科目は
- * 配当学期外でも残して、利用者が解除・確認できるようにする。
+ * 通常は「今期に開講する、指定年次の科目」へ絞る。科目名・コードを入力した
+ * 検索中は、学年・配当学期を問わずカタログ全体から一致する科目を返す。
+ * すでに選んだ科目は検索語に一致しなくても上部に残し、選択解除を可能にする。
  */
 export function filterPlannerCoursePicker(courses: Course[], profile: StudentProfile, filters: CoursePickerFilters) {
   const selected = new Set(filters.selectedCourseIds);
   const normalizedQuery = filters.query.trim().toLocaleLowerCase("ja-JP");
+  const isSearching = normalizedQuery.length > 0;
 
   return courses
-    .filter((course) => course.recommendedGrade === filters.grade)
-    .filter((course) => filters.termScope === "all"
+    .filter((course) => isSearching || course.recommendedGrade === filters.grade)
+    .filter((course) => isSearching || filters.termScope === "all"
       || selected.has(course.id)
       || course.offerings.some((offering) => canUseOffering(course, offering, profile)))
-    .filter((course) => selected.has(course.id) || !normalizedQuery || `${course.code} ${course.name}`.toLocaleLowerCase("ja-JP").includes(normalizedQuery))
+    .filter((course) => selected.has(course.id) || !isSearching || `${course.code} ${course.name}`.toLocaleLowerCase("ja-JP").includes(normalizedQuery))
     .sort((a, b) => a.category.localeCompare(b.category) || a.code.localeCompare(b.code, "ja"));
 }

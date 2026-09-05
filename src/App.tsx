@@ -425,6 +425,10 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
   }), [dataset.courses, pickerGrade, pickerQuery, pickerTermScope, profile, selectedPickerCourseIds]);
   const selectedPickerCourses = pickerCourses.filter((course) => selectedPickerCourseIds.includes(course.id));
   const unselectedPickerCourses = pickerCourses.filter((course) => !selectedPickerCourseIds.includes(course.id));
+  const normalizedPickerQuery = pickerQuery.trim().toLocaleLowerCase("ja-JP");
+  const matchedPickerCourseCount = normalizedPickerQuery
+    ? pickerCourses.filter((course) => `${course.code} ${course.name}`.toLocaleLowerCase("ja-JP").includes(normalizedPickerQuery)).length
+    : pickerCourses.length;
   const selectedPickerOfferedCourseIds = selectedPickerCourses
     .filter((course) => course.offerings.some((offering) => canUseOffering(course, offering, profile)))
     .map((course) => course.id);
@@ -524,13 +528,13 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
     {automaticRequiredCourses.length > 0 && <section className="notice auto-required-notice" role="status"><strong>必修を自動選択・固定しました</strong><p>{automaticRequiredCourses.map((course) => course.name).join("、")}</p></section>}
     <section className="planner-layout">
       <div className="planner-main">
-        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COURSE PICKER</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-required" />必修 <i className="legend-completed" />修得済 <i className="legend-wanted" />今期の希望 <i className="legend-blocked" />前提未達</span></div><p className="compact">初期表示は「現在の学年・今期に開講する科目」です。年次・配当学期・科目名で絞り込み、必要な科目群だけ開けます。今期に開講するカードは「できれば」→「必ず」→解除、今期に開講しないカードは「将来の目標」を切り替えます。</p>
+        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COURSE PICKER</p><h2>取りたい科目を選ぶ</h2></div><span className="legend"><i className="legend-required" />必修 <i className="legend-completed" />修得済 <i className="legend-wanted" />今期の希望 <i className="legend-blocked" />前提未達</span></div><p className="compact">初期表示は「現在の学年・今期に開講する科目」です。科目名・科目コードで検索すると、学年・配当学期を問わず全科目から探せます。今期に開講するカードは「できれば」→「必ず」→解除、今期に開講しないカードは「将来の目標」を切り替えます。</p>
           <section className="course-picker-controls" aria-label="科目一覧の絞り込み">
             <div className="course-picker-grade-tabs" role="group" aria-label="表示する年次">{[1, 2, 3, 4].map((grade) => <button type="button" key={grade} className={pickerGrade === grade ? "active" : ""} aria-pressed={pickerGrade === grade} onClick={() => setPickerGrade(grade)}>{grade}年次</button>)}</div>
             <label>配当学期<select value={pickerTermScope} onChange={(event) => setPickerTermScope(event.target.value as CoursePickerTermScope)}><option value="current">今期に開講</option><option value="all">配当学期すべて</option></select></label>
-            <label>科目名・コードで絞り込み<input value={pickerQuery} onChange={(event) => setPickerQuery(event.target.value)} placeholder="例: プログラミング、K1003" /></label>
+            <label>すべての授業を検索<input type="search" value={pickerQuery} onChange={(event) => setPickerQuery(event.target.value)} placeholder="例: プログラミング、線形代数II、K1003" /></label>
           </section>
-          <p className="course-picker-count">{pickerGrade}年次・{pickerTermScope === "current" ? "今期に開講" : "配当学期すべて"}の表示対象: <b>{pickerCourses.length}科目</b>{pickerQuery.trim() ? "（検索結果）" : ""}</p>
+          <p className="course-picker-count">{pickerQuery.trim() ? <>「{pickerQuery.trim()}」の検索結果: <b>{matchedPickerCourseCount}科目</b><small>学年・配当学期を問わず検索／選択済み科目は上に表示</small></> : <>{pickerGrade}年次・{pickerTermScope === "current" ? "今期に開講" : "配当学期すべて"}の表示対象: <b>{pickerCourses.length}科目</b></>}</p>
           {selectedPickerCourses.length > 0 && <section className="course-picker-selected"><h3>この年次で選択済み・自動選択の科目</h3><div className="course-picker-cards">{selectedPickerCourses.map(courseCard)}</div><PlanTimetable plan={selectedPickerPreviewPlan} profile={selectedPickerPreviewProfile} headingId="selected-course-timetable-title" eyebrow="SELECTED COURSE SCHEDULE" title="選択中の時間割（仮配置）" description="現在の選択から組めるクラスの組み合わせを、曜日・時限で仮表示しています。履修案を生成すると、同じ形式で最終候補を確認できます。" emptyMessage="この年次で今期に開講する選択済み科目がないため、時間割は表示されません。" />{selectedPickerFutureCourses.length > 0 && <p className="course-picker-preview-note">今期は未開講の将来目標は時間割に含めていません：{selectedPickerFutureCourses.map((course) => course.name).join("、")}</p>}{selectedPickerPreviewPlan.rejected.length > 0 && <p className="course-picker-preview-note warning">{selectedPickerPreviewPlan.rejected.length}科目は、前提条件・上限・時間の条件により仮配置できていません。履修案を生成すると理由を確認できます。</p>}</section>}
           <div className="course-picker-groups">{pickerGroups.map((group) => <details key={group.category} className="course-picker-group" open={expandedPickerCategories[group.category]} onToggle={(event) => {
             const isOpen = event.currentTarget.open;

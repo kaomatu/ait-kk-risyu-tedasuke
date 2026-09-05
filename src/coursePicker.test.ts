@@ -37,9 +37,11 @@ describe("ツール2の科目選択欄の絞り込み", () => {
     expect(result.map((course) => course.id)).toEqual(["fall", "spring"]);
   });
 
-  it("配当学期すべての表示と科目名・コード検索に対応する", () => {
-    const result = filterPlannerCoursePicker(courses, profile, { grade: 1, termScope: "all", query: "後期", selectedCourseIds: [] });
-    expect(result.map((course) => course.id)).toEqual(["fall"]);
+  it("科目名・コード検索では、学年・配当学期を問わず全科目から探せる", () => {
+    const nameResult = filterPlannerCoursePicker(courses, profile, { grade: 1, termScope: "current", query: "二年次", selectedCourseIds: [] });
+    const codeResult = filterPlannerCoursePicker(courses, profile, { grade: 1, termScope: "current", query: "F101", selectedCourseIds: [] });
+    expect(nameResult.map((course) => course.id)).toEqual(["second"]);
+    expect(codeResult.map((course) => course.id)).toEqual(["fall"]);
   });
 
   it("検索中でも、すでに選んだ科目は上部で確認・解除できる", () => {
