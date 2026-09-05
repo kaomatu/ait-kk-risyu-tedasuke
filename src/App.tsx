@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loginWithPassphrase, logout, saveGraduationPlan, saveProfileSnapshot, subscribeToAuth } from "./firebase";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
-import { filterPlannerCoursePicker, type CoursePickerTermScope } from "./coursePicker";
+import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterPlannerCoursePicker, selectedPlannerCourseIds, type CoursePickerTermScope } from "./coursePicker";
 import { createPlanScheduleSegments } from "./planSchedule";
 import { GraduationPlanner } from "./GraduationPlanner";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type GraduationPlan, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
@@ -411,16 +411,12 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
     .map((id) => dataset.courses.find((course) => course.id === id))
     .filter((course): course is Course => Boolean(course));
   const automaticGraduationPlanCourses = Object.entries(profile.autoGraduationPlanWanted ?? {})
+    .filter(([id]) => Boolean(profile.wanted[id]))
     .map(([id, priority]) => ({ course: dataset.courses.find((course) => course.id === id), priority }))
     .filter((item): item is { course: Course; priority: "must" | "prefer" } => Boolean(item.course));
   const protectedRequiredSlots = useMemo(() => requiredScheduleSlots(dataset, profile), [dataset, profile]);
   const recommendations = useMemo(() => plan ? recommendCourses(dataset, profile, plan) : [], [dataset, profile, plan]);
-  const selectedPickerCourseIds = useMemo(() => Array.from(new Set([
-    ...Object.keys(profile.wanted),
-    ...profile.futureGoalCourseIds,
-    ...profile.autoRequiredCourseIds,
-    ...Object.keys(profile.autoGraduationPlanWanted ?? {}),
-  ])), [profile.autoGraduationPlanWanted, profile.autoRequiredCourseIds, profile.futureGoalCourseIds, profile.wanted]);
+  const selectedPickerCourseIds = useMemo(() => selectedPlannerCourseIds(profile), [profile.autoRequiredCourseIds, profile.futureGoalCourseIds, profile.wanted]);
   const pickerCourses = useMemo(() => filterPlannerCoursePicker(dataset.courses, profile, {
     grade: pickerGrade,
     termScope: pickerTermScope,
@@ -452,20 +448,11 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
   function toggleWanted(course: Course) {
     // 自動選択された必修は、計画の土台として固定する。
     if (profile.autoRequiredCourseIds.includes(course.id)) return;
-    const current = profile.wanted[course.id];
-    const wanted = { ...profile.wanted };
-    if (!current) wanted[course.id] = "prefer";
-    else if (current === "prefer") wanted[course.id] = "must";
-    else delete wanted[course.id];
-    // 学期変更で将来目標だった科目が今期に開講した場合は、二重の意図を残さない。
-    patchProfile({ wanted, futureGoalCourseIds: profile.futureGoalCourseIds.filter((id) => id !== course.id) });
+    patchProfile(cycleCurrentTermCourseIntent(profile, course.id));
   }
 
   function toggleFutureGoal(course: Course) {
-    const futureGoalCourseIds = profile.futureGoalCourseIds.includes(course.id)
-      ? profile.futureGoalCourseIds.filter((id) => id !== course.id)
-      : [...profile.futureGoalCourseIds, course.id];
-    patchProfile({ futureGoalCourseIds });
+    patchProfile(cycleFutureCourseIntent(profile, course.id));
   }
 
   function toggleCourseIntent(course: Course) {

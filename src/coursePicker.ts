@@ -12,6 +12,54 @@ export interface CoursePickerFilters {
 }
 
 /**
+ * COURSE PICKER の「選択済み」欄に表示する科目を返す。
+ *
+ * autoGraduationPlanWanted は「ツール3から自動で追加した理由」を表す補助情報であり、
+ * 選択中かどうかの根拠にはしない。実際の選択状態は wanted / futureGoalCourseIds /
+ * autoRequiredCourseIds だけで決める。これにより、利用者が自動追加の科目を解除した後に
+ * 選択済み欄へ残り続けることを防ぐ。
+ */
+export function selectedPlannerCourseIds(profile: StudentProfile) {
+  return Array.from(new Set([
+    ...Object.keys(profile.wanted),
+    ...profile.futureGoalCourseIds,
+    ...profile.autoRequiredCourseIds,
+  ]));
+}
+
+/**
+ * 今期に開講する科目の選択状態を「できれば」→「必ず」→解除で切り替える。
+ * 自動選択された科目でも、利用者が操作した時点で自動選択の補助情報を外す。
+ * 必修の固定科目は呼び出し側で操作不可としている。
+ */
+export function cycleCurrentTermCourseIntent(profile: StudentProfile, courseId: string) {
+  const wanted = { ...profile.wanted };
+  const current = wanted[courseId];
+  if (!current) wanted[courseId] = "prefer";
+  else if (current === "prefer") wanted[courseId] = "must";
+  else delete wanted[courseId];
+
+  const autoGraduationPlanWanted = { ...(profile.autoGraduationPlanWanted ?? {}) };
+  delete autoGraduationPlanWanted[courseId];
+
+  return {
+    wanted,
+    futureGoalCourseIds: profile.futureGoalCourseIds.filter((id) => id !== courseId),
+    autoGraduationPlanWanted,
+  };
+}
+
+/** 今期外の科目を将来目標として追加・解除する。 */
+export function cycleFutureCourseIntent(profile: StudentProfile, courseId: string) {
+  const futureGoalCourseIds = profile.futureGoalCourseIds.includes(courseId)
+    ? profile.futureGoalCourseIds.filter((id) => id !== courseId)
+    : [...profile.futureGoalCourseIds, courseId];
+  const autoGraduationPlanWanted = { ...(profile.autoGraduationPlanWanted ?? {}) };
+  delete autoGraduationPlanWanted[courseId];
+  return { futureGoalCourseIds, autoGraduationPlanWanted };
+}
+
+/**
  * ツール2の科目選択欄に表示する科目を返す。
  * 通常は「今期に開講する、指定年次の科目」へ絞るが、既に選んだ科目は
  * 配当学期外でも残して、利用者が解除・確認できるようにする。
