@@ -75,11 +75,13 @@ function displayTreeCourseName(course: Course) {
   return course.name;
 }
 
-function treeCourseState(courseId: string, targetCourseIds: string[], requiredCourseIds: string[], recommendedCourseIds: string[], completedCourseIds: string[]): TreeCourseState {
+export function treeCourseState(courseId: string, targetCourseIds: string[], requiredCourseIds: string[], recommendedCourseIds: string[], completedCourseIds: string[]): TreeCourseState {
+  // 修得済みは、目標・実線前提・破線推奨より常に優先する。
+  // 以降の履修計画で改めて選ぶ対象ではないため、ツリー上では緑の実線枠で固定する。
+  if (completedCourseIds.includes(courseId)) return "completed";
   if (targetCourseIds.includes(courseId)) return "target";
   if (requiredCourseIds.includes(courseId)) return "required";
   if (recommendedCourseIds.includes(courseId)) return "recommended";
-  if (completedCourseIds.includes(courseId)) return "completed";
   return "default";
 }
 
