@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { initializeApp } from "firebase-admin/app";
@@ -126,6 +126,26 @@ async function accountPasswordMatches(password: string, account: StoredAccount) 
 function createAccountCustomToken(uid: string, username: string) {
   return getAuth().createCustomToken(uid, { appAccess: true, userAccount: true, username });
 }
+
+/**
+ * 旧公開版を開いたままの利用者が、番号付き保存データを退避してから
+ * 新アカウントへ移行できるようにする互換用の入口。新UIからは呼び出さない。
+ */
+export const authenticateWithPassphrase = onCall(
+  { secrets: [APP_ACCESS_PASSWORD] },
+  async (request) => {
+    const remoteAddress = request.rawRequest.ip ?? "unknown";
+    rateLimit(`legacy:${remoteAddress}`);
+    const password = request.data && typeof request.data.password === "string" ? request.data.password : "";
+    const deviceId = request.data && typeof request.data.deviceId === "string" ? request.data.deviceId : "";
+    const expected = APP_ACCESS_PASSWORD.value().replace(/\r?\n$/, "");
+    if (!password || !expected || !deviceId || deviceId.length > 128 || !passwordsMatch(password, expected)) {
+      throw new HttpsError("permission-denied", "パスワードが正しくありません。");
+    }
+    const uid = `passphrase-${createHmac("sha256", expected).update(deviceId).digest("hex")}`;
+    return { customToken: await getAuth().createCustomToken(uid, { appAccess: true, legacyAccess: true }) };
+  },
+);
 
 /**
  * 旧バージョンは端末ごとの一時UIDで保存していた。旧セッションから初めて
