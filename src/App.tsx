@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loginWithPassphrase, logout, saveGraduationPlan, saveProfileSnapshot, subscribeToAuth } from "./firebase";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
-import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds, type CoursePickerTermScope } from "./coursePicker";
+import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterCoursesByQuery, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds, type CoursePickerTermScope } from "./coursePicker";
 import { createPlanScheduleSegments } from "./planSchedule";
 import { GraduationPlanner } from "./GraduationPlanner";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type GraduationPlan, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
@@ -398,6 +398,7 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
   const [pickerGrade, setPickerGrade] = useState(profile.currentGrade);
   const [pickerTermScope, setPickerTermScope] = useState<CoursePickerTermScope>("current");
   const [pickerQuery, setPickerQuery] = useState("");
+  const [completedHistoryQuery, setCompletedHistoryQuery] = useState("");
   const [expandedPickerCategories, setExpandedPickerCategories] = useState<Record<Course["category"], boolean>>({ specialized: true, general: false });
   const termCourses = dataset.courses.filter((course) => course.offerings.some((offering) => (
     canUseOffering(course, offering, profile)
@@ -426,9 +427,11 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
   const selectedPickerCourses = pickerCourses.filter((course) => selectedPickerCourseIds.includes(course.id));
   const unselectedPickerCourses = pickerCourses.filter((course) => !selectedPickerCourseIds.includes(course.id));
   const normalizedPickerQuery = pickerQuery.trim().toLocaleLowerCase("ja-JP");
-  const matchedPickerCourseCount = normalizedPickerQuery
-    ? pickerCourses.filter((course) => `${course.code} ${course.name}`.toLocaleLowerCase("ja-JP").includes(normalizedPickerQuery)).length
-    : pickerCourses.length;
+  const matchedPickerCourseCount = normalizedPickerQuery ? filterCoursesByQuery(pickerCourses, pickerQuery).length : pickerCourses.length;
+  const completedHistoryCourses = useMemo(
+    () => filterCoursesByQuery(dataset.courses, completedHistoryQuery),
+    [completedHistoryQuery, dataset.courses],
+  );
   const selectedPickerOfferedCourseIds = selectedPickerCourses
     .filter((course) => course.offerings.some((offering) => canUseOffering(course, offering, profile)))
     .map((course) => course.id);
@@ -544,7 +547,7 @@ function Planner({ dataset, profile, plan, progress, graduationPlan, patchProfil
             {group.courses.length > 0 ? <div className="course-picker-cards">{group.courses.map(courseCard)}</div> : <p className="course-picker-empty">この条件に一致する未選択の科目はありません。</p>}
           </details>)}</div>
         </article>
-        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COMPLETED HISTORY</p><h2>修得済みの科目</h2></div><span className="pill">選択式入力</span></div><p>カタログから科目を選択して修得履歴を入力します。自由入力は使いません。</p><div className="history-list">{dataset.courses.map((course) => <label key={course.id} className="history-item"><input type="checkbox" checked={profile.completedCourseIds.includes(course.id)} onChange={() => toggleCompleted(course.id)} /> <span>{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位</small></label>)}</div>{profile.completedCourseIds.length > 0 && <div className="rechallenge-list"><p><b>再チャレンジ履修</b>（修得済みでも今期にもう一度履修する科目）</p>{profile.completedCourseIds.map((id) => { const course = dataset.courses.find((item) => item.id === id); return course ? <label key={id} className="mini-check"><input type="checkbox" checked={profile.rechallengeCourseIds.includes(id)} onChange={() => toggleRechallenge(id)} /> {course.name}</label> : null; })}</div>}</article>
+        <article className="section-card"><div className="section-heading"><div><p className="eyebrow">COMPLETED HISTORY</p><h2>修得済みの科目</h2></div><span className="pill">選択式入力</span></div><p>カタログから科目を選択して修得履歴を入力します。自由入力は使いません。</p><label className="history-search">修得済み科目を検索<input type="search" value={completedHistoryQuery} onChange={(event) => setCompletedHistoryQuery(event.target.value)} placeholder="例: プログラミング、線形代数II、K1003" /></label><p className="history-search-count">{completedHistoryQuery.trim() ? <>「{completedHistoryQuery.trim()}」の検索結果: <b>{completedHistoryCourses.length}科目</b></> : <>全 <b>{completedHistoryCourses.length}科目</b></>}</p><div className="history-list">{completedHistoryCourses.length > 0 ? completedHistoryCourses.map((course) => <label key={course.id} className="history-item"><input type="checkbox" checked={profile.completedCourseIds.includes(course.id)} onChange={() => toggleCompleted(course.id)} /> <span>{displayCourseCode(course)}</span><strong>{course.name}</strong><small>{course.credits}単位</small></label>) : <p className="history-search-empty">「{completedHistoryQuery.trim()}」に一致する科目はありません。</p>}</div>{profile.completedCourseIds.length > 0 && <div className="rechallenge-list"><p><b>再チャレンジ履修</b>（修得済みでも今期にもう一度履修する科目）</p>{profile.completedCourseIds.map((id) => { const course = dataset.courses.find((item) => item.id === id); return course ? <label key={id} className="mini-check"><input type="checkbox" checked={profile.rechallengeCourseIds.includes(id)} onChange={() => toggleRechallenge(id)} /> {course.name}</label> : null; })}</div>}</article>
       </div>
       <aside className="planner-side">
         <article className="section-card"><p className="eyebrow">FREE TIME</p><h2>空けたい時限</h2><p className="compact">クリック: 固定で空ける → できれば空ける → 解除。必修の固定枠は「必」と表示され、空き希望にはできません。</p><div className="slot-grid"><span />{weekdays.map((day) => <span className="slot-header" key={day}>{weekdayLabels[day]}</span>)}{periods.map((period) => <Fragment key={`period-${period}`}><span className="period-label">{period}</span>{weekdays.map((day) => { const key = slotKey(day, period); const protectedSlot = protectedRequiredSlots.includes(key); const mode = profile.hardBlockedSlots.includes(key) ? "hard" : profile.softBlockedSlots.includes(key) ? "soft" : ""; return <button key={key} disabled={protectedSlot} className={`slot ${mode} ${protectedSlot ? "required-slot" : ""}`} onClick={() => cycleSlot(day, period)} aria-label={`${weekdayLabels[day]}曜日${period}限`}>{protectedSlot ? "必" : mode === "hard" ? "空" : mode === "soft" ? "△" : ""}</button>; })}</Fragment>)}</div><div className="slot-caption"><span>必 = 必修の固定枠</span><span>空 = 固定</span><span>△ = できれば</span></div></article>

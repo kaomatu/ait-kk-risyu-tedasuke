@@ -141,3 +141,8 @@ input, select { min-height: 44px; border: 1px solid #d7ddea; border-radius: 10px
 .course-picker-selected .plan-timetable-heading { align-items: start; }
 .course-picker-preview-note { margin: 11px 1px 0 !important; color: #61708a !important; font-size: 12px !important; line-height: 1.6 !important; }
 .course-picker-preview-note.warning { color: #975913 !important; }
+
+.history-search { max-width: 460px; margin-top: 15px; }
+.history-search-count { margin: 8px 0 10px !important; color: #68758c !important; font-size: 12px !important; }
+.history-search-count b { color: #364876; }
+.history-search-empty { grid-column: 1 / -1; margin: 0 !important; padding: 13px; color: #7a869a !important; background: #f8f9fc; border: 1px dashed #cad2e2; border-radius: 8px; font-size: 12px !important; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds } from "./coursePicker";
+import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterCoursesByQuery, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds } from "./coursePicker";
 import type { Course, StudentProfile } from "./types";
 
 const profile: StudentProfile = {
@@ -27,6 +27,12 @@ const courses: Course[] = [
 ];
 
 describe("ツール2の科目選択欄の絞り込み", () => {
+  it("修得済み科目欄でも使う検索は、科目名・コードで大文字小文字を区別せず絞り込む", () => {
+    expect(filterCoursesByQuery(courses, "二年次").map((course) => course.id)).toEqual(["second"]);
+    expect(filterCoursesByQuery(courses, "f101").map((course) => course.id)).toEqual(["fall"]);
+    expect(filterCoursesByQuery(courses, "見つからない")).toEqual([]);
+  });
+
   it("初期の今期表示は、現在の学年かつ今期に開講する科目へ絞る", () => {
     const result = filterPlannerCoursePicker(courses, profile, { grade: 1, termScope: "current", query: "", selectedCourseIds: [] });
     expect(result.map((course) => course.id)).toEqual(["spring"]);

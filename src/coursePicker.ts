@@ -11,6 +11,13 @@ export interface CoursePickerFilters {
   selectedCourseIds: string[];
 }
 
+/** 科目名または科目コードでカタログを絞り込む。空欄なら全科目を返す。 */
+export function filterCoursesByQuery(courses: Course[], query: string) {
+  const normalizedQuery = query.trim().toLocaleLowerCase("ja-JP");
+  if (!normalizedQuery) return courses;
+  return courses.filter((course) => `${course.code} ${course.name}`.toLocaleLowerCase("ja-JP").includes(normalizedQuery));
+}
+
 /**
  * COURSE PICKER の「選択済み」欄に表示する科目を返す。
  *
@@ -85,12 +92,13 @@ export function filterPlannerCoursePicker(courses: Course[], profile: StudentPro
   const selected = new Set(filters.selectedCourseIds);
   const normalizedQuery = filters.query.trim().toLocaleLowerCase("ja-JP");
   const isSearching = normalizedQuery.length > 0;
+  const matchedCourseIds = new Set(filterCoursesByQuery(courses, filters.query).map((course) => course.id));
 
   return courses
     .filter((course) => isSearching || course.recommendedGrade === filters.grade)
     .filter((course) => isSearching || filters.termScope === "all"
       || selected.has(course.id)
       || course.offerings.some((offering) => canUseOffering(course, offering, profile)))
-    .filter((course) => selected.has(course.id) || !isSearching || `${course.code} ${course.name}`.toLocaleLowerCase("ja-JP").includes(normalizedQuery))
+    .filter((course) => selected.has(course.id) || !isSearching || matchedCourseIds.has(course.id))
     .sort((a, b) => a.category.localeCompare(b.category) || a.code.localeCompare(b.code, "ja"));
 }
