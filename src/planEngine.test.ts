@@ -31,50 +31,6 @@ describe("履修計画エンジン", () => {
     expect(activeAnnualCap(mockCatalog, profile({ gpa: 0, annualCapBonusLocked: true }))).toBe(52);
   });
 
-  it("言語系8単位は教育課程表の囲み内18科目だけを集計し、後続のことばと文化は含めない", () => {
-    const kkCourses = createKk2026Courses();
-    const languageRequirementCodes = kkCourses
-      .filter((course) => course.tags?.includes("graduation_language"))
-      .map((course) => course.code);
-
-    expect(languageRequirementCodes).toEqual([
-      "G1829", "G1830", "G1831", "G3834", "G3832", "G3833", "G3835", "G3836", "G3837", "G3838", "G3845", "G3846",
-      "G3843", "G3844", "G3841", "G3842", "G3839", "G3840",
-    ]);
-    expect(kkCourses.find((course) => course.code === "G2838")?.tags).not.toContain("graduation_language");
-
-    const byCode = new Map(kkCourses.map((course) => [course.code, course]));
-    const dataset: Dataset = {
-      ...mockCatalog,
-      courses: ["G1829", "G3845", "G3843", "G2838"].map((code) => byCode.get(code)!),
-    };
-    const progress = calculateProgress(dataset, profile({
-      completedCourseIds: dataset.courses.map((course) => course.id),
-    }), null);
-
-    expect(progress.english).toBe(3);
-    expect(progress.language).toBe(4);
-  });
-
-  it("言語系8単位が不足しているとき、対象科目には要件を補う推薦理由を付ける", () => {
-    const languageRequirementCourse: Course = {
-      id: "language-requirement", code: "LR", name: "言語系対象", credits: 1, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", tags: ["graduation_language"],
-      offerings: [{ id: "language-requirement-a", term: "spring", classCode: "A", weekday: "mon", periods: [1], lottery: false }],
-    };
-    const nonRequirementLanguageCourse: Course = {
-      id: "language-non-requirement", code: "LN", name: "言語系対象外", credits: 1, category: "general", requirementType: "elective", recommendedGrade: 1, recommendedTerm: "spring", tags: ["language"],
-      offerings: [{ id: "language-non-requirement-a", term: "spring", classCode: "A", weekday: "tue", periods: [1], lottery: false }],
-    };
-    const dataset = { ...mockCatalog, courses: [languageRequirementCourse, nonRequirementLanguageCourse] };
-    const student = profile({ targetTermCredits: 1 });
-    const recommendations = recommendCourses(dataset, student, generatePlan(dataset, student));
-
-    expect(recommendations.find((item) => item.course.id === languageRequirementCourse.id)?.reasons)
-      .toContain("言語系（8単位）の卒業要件を補えます");
-    expect(recommendations.find((item) => item.course.id === nonRequirementLanguageCourse.id)?.reasons)
-      .not.toContain("言語系（8単位）の卒業要件を補えます");
-  });
-
   it("取りたい科目に選択していない配当期の科目を、履修案へ勝手に追加しない", () => {
     const result = generatePlan(mockCatalog, profile({
       currentGrade: 1,

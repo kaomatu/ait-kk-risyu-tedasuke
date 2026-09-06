@@ -22,38 +22,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * 既に公開済みのKKデータセットへ、2026年度教育課程表117頁の言語系8単位要件を一度だけ補う。
- * 科目マスタ全体を置き換えず、該当18科目の判定タグと卒業要件だけを更新するため、利用者の既存データを保つ。
- */
-function needsKkLanguageRequirementMigration(dataset: Record<string, unknown>) {
+/** 直前に公開した独立「言語系8単位」要件を、既存データセットから安全に取り除く。 */
+function needsKkLanguageRequirementCleanup(dataset: Record<string, unknown>) {
   const program = isRecord(dataset.program) ? dataset.program : null;
   const policies = isRecord(dataset.policies) ? dataset.policies : null;
   const graduation = policies && isRecord(policies.graduation) ? policies.graduation : null;
-  return program?.code === "KK" && typeof graduation?.language !== "number";
+  const hasLegacyRequirement = graduation !== null && Object.prototype.hasOwnProperty.call(graduation, "language");
+  const hasLegacyTag = Array.isArray(dataset.courses) && dataset.courses.some((course) => isRecord(course)
+    && Array.isArray(course.tags) && course.tags.includes("graduation_language"));
+  return program?.code === "KK" && (hasLegacyRequirement || hasLegacyTag);
 }
 
-function migrateKkLanguageRequirement(dataset: Record<string, unknown>) {
-  const sourceLanguageTags = new Map(
-    createKkSeedDataset().courses
-      .filter((course) => course.tags?.includes("graduation_language"))
-      .map((course) => [course.id, course.tags]),
-  );
+function removeKkLanguageRequirement(dataset: Record<string, unknown>) {
   const courses = Array.isArray(dataset.courses)
     ? dataset.courses.map((course) => {
       if (!isRecord(course)) return course;
-      const tags = typeof course.id === "string" ? sourceLanguageTags.get(course.id) : undefined;
-      return tags ? { ...course, tags } : course;
+      if (!Array.isArray(course.tags) || !course.tags.includes("graduation_language")) return course;
+      return { ...course, tags: course.tags.filter((tag) => tag !== "graduation_language") };
     })
     : dataset.courses;
   const policies = isRecord(dataset.policies) ? dataset.policies : {};
   const graduation = isRecord(policies.graduation) ? policies.graduation : {};
+  const { language: _removedLanguageRequirement, ...graduationWithoutLanguage } = graduation;
   const sourceStatus = typeof dataset.sourceStatus === "string" ? dataset.sourceStatus : "published_dataset";
 
   return {
     ...dataset,
-    sourceStatus: `${sourceStatus}; language_8_credit_requirement_applied`,
-    policies: { ...policies, graduation: { ...graduation, language: 8 } },
+    sourceStatus: sourceStatus.replace("; language_8_credit_requirement_applied", ""),
+    policies: { ...policies, graduation: graduationWithoutLanguage },
     courses,
   };
 }
@@ -296,10 +292,10 @@ export const getCatalog = onCall(async (request) => {
   const datasetRef = getFirestore().collection("datasets").doc(DATASET_ID);
   const snapshot = await datasetRef.get();
   const dataset = snapshot.data() as Record<string, unknown> | undefined;
-  if (dataset && needsKkLanguageRequirementMigration(dataset)) {
-    const migrated = migrateKkLanguageRequirement(dataset);
-    await datasetRef.set({ ...migrated, updatedAt: new Date().toISOString(), seededBy: "server-language-requirement-migration" });
-    return { dataset: migrated };
+  if (dataset && needsKkLanguageRequirementCleanup(dataset)) {
+    const cleaned = removeKkLanguageRequirement(dataset);
+    await datasetRef.set({ ...cleaned, updatedAt: new Date().toISOString(), seededBy: "server-language-requirement-cleanup" });
+    return { dataset: cleaned };
   }
   return { dataset: dataset ?? null };
 });

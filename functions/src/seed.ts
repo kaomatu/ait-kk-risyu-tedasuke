@@ -73,7 +73,6 @@ export function createKkSeedDataset() {
         generalElective: 16,
         generalTotal: 24,
         english: 6,
-        language: 8,
         total: 124,
       },
     },
