@@ -300,9 +300,9 @@ export default function App() {
 
       <nav className="tabs" aria-label="主な画面">
         <TabButton current={tab} target="overview" onClick={setTab}>概要</TabButton>
-        {isAdministrator && <TabButton current={tab} target="ingestion" onClick={setTab}>ツール1: DB生成</TabButton>}
-        <TabButton current={tab} target="graduation_planner" onClick={setTab}>ツール3: 卒業計画</TabButton>
-        <TabButton current={tab} target="planner" onClick={setTab}>ツール2: 履修計画</TabButton>
+        {isAdministrator && <TabButton current={tab} target="ingestion" onClick={setTab}>DB生成</TabButton>}
+        <TabButton current={tab} target="graduation_planner" onClick={setTab}>卒業計画</TabButton>
+        <TabButton current={tab} target="planner" onClick={setTab}>履修計画</TabButton>
         <TabButton current={tab} target="rules" onClick={setTab}>要件・ルール</TabButton>
         <TabButton current={tab} target="account" onClick={setTab}>マイページ</TabButton>
       </nav>
