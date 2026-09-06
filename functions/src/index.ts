@@ -7,6 +7,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
 import { HttpsError, onCall, type CallableRequest } from "firebase-functions/v2/https";
+import { isAdministratorUsername } from "./adminAccess";
 import { createKkSeedDataset } from "./seed";
 
 initializeApp();
@@ -88,7 +89,7 @@ interface ProfileSnapshotSummary {
 }
 
 interface StoredWorkspace {
-  activeTab: "overview" | "ingestion" | "graduation_planner" | "planner" | "rules";
+  activeTab: "overview" | "ingestion" | "graduation_planner" | "planner" | "rules" | "account";
   planGenerated: boolean;
   graduationPlanDraftTargetCourseIds: string[] | null;
 }
@@ -101,9 +102,22 @@ interface StoredAccount {
   createdAt: string;
 }
 
+interface PublicAccountInfo {
+  username: string;
+  createdAt: string;
+  isAdministrator: boolean;
+}
+
 function assertAppAccess(request: CallableRequest<unknown>) {
   if (request.auth?.token.appAccess !== true) {
     throw new HttpsError("unauthenticated", "この操作にはアプリへのアクセス認証が必要です。");
+  }
+}
+
+function assertAdministrator(request: CallableRequest<unknown>) {
+  assertAppAccess(request);
+  if (request.auth?.token.administrator !== true) {
+    throw new HttpsError("permission-denied", "ツール1は管理者アカウントだけが利用できます。");
   }
 }
 
@@ -160,7 +174,12 @@ async function accountPasswordMatches(password: string, account: StoredAccount) 
 }
 
 function createAccountCustomToken(uid: string, username: string) {
-  return getAuth().createCustomToken(uid, { appAccess: true, userAccount: true, username });
+  return getAuth().createCustomToken(uid, {
+    appAccess: true,
+    userAccount: true,
+    username,
+    administrator: isAdministratorUsername(username),
+  });
 }
 
 /**
@@ -287,6 +306,26 @@ export const loginWithUserAccount = onCall(async (request) => {
   return { customToken: await createAccountCustomToken(account.uid, account.username) };
 });
 
+/** パスワードなどの秘匿情報を返さず、ログイン中の本人のアカウント概要だけを返す。 */
+export const getMyAccount = onCall(async (request) => {
+  assertAppAccess(request);
+  const username = normalizeUsername(request.auth?.token.username);
+  if (!username || request.auth?.token.userAccount !== true) {
+    throw new HttpsError("permission-denied", "登録済みアカウントでログインしてください。");
+  }
+  const snapshot = await accountCredentialRef(username).get();
+  const account = snapshot.data() as Partial<StoredAccount> | undefined;
+  if (!account || account.uid !== request.auth.uid || account.username !== username || typeof account.createdAt !== "string") {
+    throw new HttpsError("permission-denied", "アカウント情報を確認できませんでした。");
+  }
+  const response: PublicAccountInfo = {
+    username,
+    createdAt: account.createdAt,
+    isAdministrator: request.auth.token.administrator === true,
+  };
+  return { account: response };
+});
+
 export const getCatalog = onCall(async (request) => {
   assertAppAccess(request);
   const datasetRef = getFirestore().collection("datasets").doc(DATASET_ID);
@@ -315,7 +354,7 @@ export const getKkCurriculumTreeImages = onCall(async (request) => {
 });
 
 export const seedKkDataset = onCall(async (request) => {
-  assertAppAccess(request);
+  assertAdministrator(request);
   const dataset = createKkSeedDataset();
   await getFirestore().collection("datasets").doc(DATASET_ID).set({
     ...dataset,
@@ -326,7 +365,7 @@ export const seedKkDataset = onCall(async (request) => {
 });
 
 export const createIngestionJob = onCall(async (request) => {
-  assertAppAccess(request);
+  assertAdministrator(request);
   const data = request.data as Record<string, unknown>;
   const fileName = typeof data.fileName === "string" ? data.fileName.slice(0, 255) : "";
   const mimeType = typeof data.mimeType === "string" ? data.mimeType.slice(0, 100) : "";
@@ -383,7 +422,8 @@ function validWorkspace(value: unknown): value is StoredWorkspace {
       || workspace.activeTab === "ingestion"
       || workspace.activeTab === "graduation_planner"
       || workspace.activeTab === "planner"
-      || workspace.activeTab === "rules")
+      || workspace.activeTab === "rules"
+      || workspace.activeTab === "account")
     && typeof workspace.planGenerated === "boolean"
     && (workspace.graduationPlanDraftTargetCourseIds === null
       || (Array.isArray(workspace.graduationPlanDraftTargetCourseIds)

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loadStudentProfile, loginWithUserAccount, logout, registerUserAccount, saveGraduationPlan, saveProfileSnapshot, saveStudentProfile, subscribeToAuth } from "./firebase";
+import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadMyAccount, loadProfileSnapshot, loadStudentProfile, loginWithUserAccount, logout, registerUserAccount, saveGraduationPlan, saveProfileSnapshot, saveStudentProfile, subscribeToAuth, type AccountInfo } from "./firebase";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
 import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterCoursesByQuery, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds, type CoursePickerTermScope } from "./coursePicker";
 import { createPlanScheduleSegments } from "./planSchedule";
@@ -7,7 +7,7 @@ import { GraduationPlanner } from "./GraduationPlanner";
 import { slotKey, termLabels, weekdayLabels, type Course, type Dataset, type GraduationPlan, type PlanResult, type ProfileSnapshotSummary, type StudentProfile, type Weekday } from "./types";
 import "./styles.css";
 
-type Tab = "overview" | "ingestion" | "graduation_planner" | "planner" | "rules";
+type Tab = "overview" | "ingestion" | "graduation_planner" | "planner" | "rules" | "account";
 const weekdays: Weekday[] = ["mon", "tue", "wed", "thu", "fri"];
 const periods = [1, 2, 3, 4, 5, 6];
 
@@ -42,7 +42,7 @@ function profileFromUnknown(value: unknown): StudentProfile | null {
 function workspaceFromUnknown(value: unknown): { activeTab: Tab; planGenerated: boolean; graduationPlanDraftTargetCourseIds: string[] | null } | null {
   if (!value || typeof value !== "object") return null;
   const workspace = value as { activeTab?: unknown; planGenerated?: unknown; graduationPlanDraftTargetCourseIds?: unknown };
-  const allowedTabs: Tab[] = ["overview", "ingestion", "graduation_planner", "planner", "rules"];
+  const allowedTabs: Tab[] = ["overview", "ingestion", "graduation_planner", "planner", "rules", "account"];
   if (!allowedTabs.includes(workspace.activeTab as Tab) || typeof workspace.planGenerated !== "boolean"
     || (workspace.graduationPlanDraftTargetCourseIds !== null
       && (!Array.isArray(workspace.graduationPlanDraftTargetCourseIds)
@@ -70,6 +70,8 @@ export default function App() {
   const [userReady, setUserReady] = useState(false);
   const [hasAccess, setHasAccess] = useState(localPreview && sessionStorage.getItem("ait-kk-local-preview-auth") === "1");
   const [accountUsername, setAccountUsername] = useState<string | null>(null);
+  const [isAdministrator, setIsAdministrator] = useState(false);
+  const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null);
   const [legacyAccessAvailable, setLegacyAccessAvailable] = useState(false);
   const [tab, setTab] = useState<Tab>("overview");
   const [dataset, setDataset] = useState<Dataset | null>(null);
@@ -90,6 +92,7 @@ export default function App() {
     const localAccess = localPreview && sessionStorage.getItem("ait-kk-local-preview-auth") === "1";
     setHasAccess(session.isRegisteredAccount || localAccess);
     setAccountUsername(session.accountUsername);
+    setIsAdministrator(session.isAdministrator || localAccess);
     setLegacyAccessAvailable(session.hasLegacyAccess);
     setUserReady(true);
   }), [localPreview]);
@@ -98,6 +101,7 @@ export default function App() {
     if (!hasAccess) {
       setDataset(null);
       setSnapshots([]);
+      setAccountInfo(null);
       setProfile(defaultProfile());
       setGraduationPlan(null);
       setGraduationPlanDraftTargetCourseIds(null);
@@ -138,6 +142,19 @@ export default function App() {
       .finally(() => { if (!cancelled) setProfileReady(true); });
     return () => { cancelled = true; };
   }, [hasAccess]);
+
+  useEffect(() => {
+    if (!hasAccess) return undefined;
+    let cancelled = false;
+    loadMyAccount()
+      .then((next) => { if (!cancelled) setAccountInfo(next); })
+      .catch(() => { if (!cancelled) setMessage("アカウント情報を読み込めませんでした。"); });
+    return () => { cancelled = true; };
+  }, [hasAccess, accountUsername]);
+
+  useEffect(() => {
+    if (!isAdministrator && tab === "ingestion") setTab("overview");
+  }, [isAdministrator, tab]);
 
   const planProgress = useMemo(() => dataset ? calculateProgress(dataset, profile, plan) : null, [dataset, profile, plan]);
 
@@ -283,10 +300,11 @@ export default function App() {
 
       <nav className="tabs" aria-label="主な画面">
         <TabButton current={tab} target="overview" onClick={setTab}>概要</TabButton>
-        <TabButton current={tab} target="ingestion" onClick={setTab}>ツール1: DB生成</TabButton>
+        {isAdministrator && <TabButton current={tab} target="ingestion" onClick={setTab}>ツール1: DB生成</TabButton>}
         <TabButton current={tab} target="graduation_planner" onClick={setTab}>ツール3: 卒業計画</TabButton>
         <TabButton current={tab} target="planner" onClick={setTab}>ツール2: 履修計画</TabButton>
         <TabButton current={tab} target="rules" onClick={setTab}>要件・ルール</TabButton>
+        <TabButton current={tab} target="account" onClick={setTab}>マイページ</TabButton>
       </nav>
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage(null)} aria-label="閉じる">×</button></div>}
@@ -294,12 +312,13 @@ export default function App() {
       <section className="content">
         {loadingDataset && <div className="inline-loading">データを読み込んでいます…</div>}
         {!profileReady && <div className="inline-loading">前回の作業内容を復元しています…</div>}
-        {profileReady && !loadingDataset && !dataset && !localPreview && <DatasetSetup onSeed={seedDataset} />}
+        {profileReady && !loadingDataset && !dataset && !localPreview && (isAdministrator ? <DatasetSetup onSeed={seedDataset} /> : <DatasetUnavailable />)}
         {profileReady && dataset && tab === "overview" && <Overview dataset={dataset} profile={profile} progress={planProgress} onOpenPlanner={() => setTab("planner")} />}
-        {profileReady && dataset && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} onReapplyReviewedDataset={() => seedDataset("reapply")} />}
+        {profileReady && dataset && isAdministrator && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} onReapplyReviewedDataset={() => seedDataset("reapply")} />}
         {profileReady && dataset && tab === "graduation_planner" && <GraduationPlanner dataset={dataset} profile={profile} savedPlan={graduationPlan} draftTargetCourseIds={graduationPlanDraftTargetCourseIds ?? undefined} busy={graduationPlanBusy} onDraftChange={setGraduationPlanDraftTargetCourseIds} onSave={saveCurrentGraduationPlan} />}
         {profileReady && dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} graduationPlan={graduationPlan} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} snapshots={snapshots} snapshotBusy={snapshotBusy} onSaveSnapshot={saveNumberedProfile} onLoadSnapshot={loadNumberedProfile} />}
         {profileReady && dataset && tab === "rules" && <Rules dataset={dataset} />}
+        {profileReady && tab === "account" && <AccountPage account={accountInfo} profile={profile} snapshots={snapshots} graduationPlan={graduationPlan} />}
       </section>
     </main>
   );
@@ -373,6 +392,24 @@ function DatasetSetup({ onSeed }: { onSeed: () => Promise<void> }) {
     <h1>初期データセットを作成します</h1>
     <p>初回だけ、レビュー済みの初期データをFirebaseへ登録します。登録後は、ツール1のレビュー済みデータで更新します。</p>
     <button className="primary-button" onClick={() => void onSeed()}>初期データセットを作成</button>
+  </section>;
+}
+
+function DatasetUnavailable() {
+  return <section className="empty-state"><p className="eyebrow">DATASET UNAVAILABLE</p><h1>履修データを準備しています</h1><p>データセットが未作成のため、現在は履修計画を開けません。管理者へ連絡してください。</p></section>;
+}
+
+function AccountPage({ account, profile, snapshots, graduationPlan }: { account: AccountInfo | null; profile: StudentProfile; snapshots: ProfileSnapshotSummary[]; graduationPlan: GraduationPlan | null }) {
+  const createdAt = account?.createdAt ? new Date(account.createdAt) : null;
+  const latestSnapshot = snapshots.reduce((latest, snapshot) => Math.max(latest, snapshot.snapshotNo), 0);
+  return <section className="account-page">
+    <div className="section-heading standalone"><div><p className="eyebrow">MY PAGE</p><h1>マイページ</h1><p>このアカウントに保存されている履修計画の概要です。</p></div><span className="pill">{account?.isAdministrator ? "管理者" : "一般利用者"}</span></div>
+    <section className="account-grid">
+      <article className="section-card"><p className="eyebrow">ACCOUNT</p><h2>アカウント情報</h2><dl><dt>利用者ID</dt><dd>{account?.username ?? "読み込み中"}</dd><dt>作成日</dt><dd>{createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toLocaleDateString("ja-JP") : "読み込み中"}</dd><dt>権限</dt><dd>{account?.isAdministrator ? "管理者" : "一般利用者"}</dd></dl></article>
+      <article className="section-card"><p className="eyebrow">STUDY STATUS</p><h2>履修の状況</h2><dl><dt>現在</dt><dd>{profile.currentGrade}年 / {termLabels[profile.term]}</dd><dt>修得済み科目</dt><dd>{profile.completedCourseIds.length}科目</dd><dt>卒業計画</dt><dd>{graduationPlan ? "保存済み" : "未作成"}</dd></dl></article>
+      <article className="section-card"><p className="eyebrow">SAVED PLANS</p><h2>保存済みの履修案</h2><dl><dt>保存件数</dt><dd>{snapshots.length}件</dd><dt>最新番号</dt><dd>{latestSnapshot > 0 ? `No. ${latestSnapshot}` : "未保存"}</dd><dt>同期</dt><dd>このアカウントに保存中</dd></dl></article>
+    </section>
+    <p className="account-note">個人用パスワードは表示・保存されません。修得履歴、卒業計画、番号付き履修案はこの利用者IDごとに分けて保管されます。</p>
   </section>;
 }
 

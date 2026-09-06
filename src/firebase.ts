@@ -8,7 +8,14 @@ export type AuthSession = {
   user: User | null;
   accountUsername: string | null;
   isRegisteredAccount: boolean;
+  isAdministrator: boolean;
   hasLegacyAccess: boolean;
+};
+
+export type AccountInfo = {
+  username: string;
+  createdAt: string;
+  isAdministrator: boolean;
 };
 
 const firebaseConfig = {
@@ -36,12 +43,12 @@ export { firebaseEnabled };
 
 export function subscribeToAuth(callback: (session: AuthSession) => void) {
   if (!auth) {
-    callback({ user: null, accountUsername: null, isRegisteredAccount: false, hasLegacyAccess: false });
+    callback({ user: null, accountUsername: null, isRegisteredAccount: false, isAdministrator: false, hasLegacyAccess: false });
     return () => undefined;
   }
   return onAuthStateChanged(auth, (user) => {
     if (!user) {
-      callback({ user: null, accountUsername: null, isRegisteredAccount: false, hasLegacyAccess: false });
+      callback({ user: null, accountUsername: null, isRegisteredAccount: false, isAdministrator: false, hasLegacyAccess: false });
       return;
     }
     void user.getIdTokenResult()
@@ -51,10 +58,11 @@ export function subscribeToAuth(callback: (session: AuthSession) => void) {
           user,
           accountUsername: typeof token.claims.username === "string" ? token.claims.username : null,
           isRegisteredAccount,
+          isAdministrator: token.claims.administrator === true,
           hasLegacyAccess: token.claims.appAccess === true && !isRegisteredAccount,
         });
       })
-      .catch(() => callback({ user, accountUsername: null, isRegisteredAccount: false, hasLegacyAccess: false }));
+      .catch(() => callback({ user, accountUsername: null, isRegisteredAccount: false, isAdministrator: false, hasLegacyAccess: false }));
   });
 }
 
@@ -70,6 +78,15 @@ export async function loginWithUserAccount(payload: { username: string; password
   const login = httpsCallable<typeof payload, { customToken: string }>(functions, "loginWithUserAccount");
   const response = await login(payload);
   await signInWithCustomToken(auth, response.data.customToken);
+}
+
+export async function loadMyAccount(): Promise<AccountInfo | null> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") {
+    return { username: "local-preview", createdAt: new Date(0).toISOString(), isAdministrator: true };
+  }
+  if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const getMyAccount = httpsCallable<undefined, { account: AccountInfo }>(functions, "getMyAccount");
+  return (await getMyAccount()).data.account;
 }
 
 export async function logout() {
