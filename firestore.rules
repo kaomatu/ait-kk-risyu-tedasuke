@@ -14,9 +14,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // 利用者IDとパスワードハッシュはCloud Functionsだけが扱う。
+    // クライアントからの読み書きは、認証済み利用者にも許可しない。
+    match /accountCredentials/{accountId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId}/{document=**} {
       allow read, write: if hasAppAccess() && request.auth.uid == userId;
     }
   }
 }
-

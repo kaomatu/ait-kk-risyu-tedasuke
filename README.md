@@ -4,9 +4,11 @@
 
 ## セキュリティ方針
 
-- 共有パスワードはFirebase Secret `APP_ACCESS_PASSWORD`だけへ保存します。Reactの環境変数、Git、ブラウザのJavaScriptには保存しません。
-- パスワードが検証されると、Cloud FunctionsがFirebase Custom Tokenを発行します。
-- Firestoreは`appAccess`カスタムクレームを持つユーザーだけがカタログを読めます。
+- 初回の新規登録にはFirebase Secret `APP_ACCESS_PASSWORD`（共通アクセスパスワード）を使います。Reactの環境変数、Git、ブラウザのJavaScriptには保存しません。
+- 登録後は、利用者IDと個人用パスワードでログインします。個人用パスワードはランダムなソルトを付けて`scrypt`でハッシュ化し、平文では保存しません。
+- Cloud Functionsはログインに成功した利用者だけへFirebase Custom Tokenを発行します。Firestoreの履修データはUIDごとに分離され、他の利用者のデータは読めません。
+- プロフィール（修得履歴、希望、空き希望、抽選状況など）、卒業計画、保存前の卒業目標の編集内容、番号付き保存プラン、最後に開いていた画面をユーザーごとに自動保存・復元します。
+- 旧版の端末ごとの保存データは、その端末で最初に新規登録したアカウントへ一度だけ引き継ぎます。
 - このリポジトリはGitHub上で**private**として作成します。
 
 ## 開発

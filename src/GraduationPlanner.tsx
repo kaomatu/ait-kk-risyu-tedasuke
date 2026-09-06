@@ -200,21 +200,25 @@ export function GraduationPlanner({
   dataset,
   profile,
   savedPlan,
+  draftTargetCourseIds,
   busy,
+  onDraftChange,
   onSave,
 }: {
   dataset: Dataset;
   profile: StudentProfile;
   savedPlan: GraduationPlan | null;
+  draftTargetCourseIds?: string[] | null;
   busy: boolean;
+  onDraftChange: (targetCourseIds: string[]) => void;
   onSave: (plan: GraduationPlan) => Promise<void>;
 }) {
-  const [targetCourseIds, setTargetCourseIds] = useState<string[]>(savedPlan?.targetCourseIds ?? []);
+  const [targetCourseIds, setTargetCourseIds] = useState<string[]>(draftTargetCourseIds ?? savedPlan?.targetCourseIds ?? []);
   const [selectedRequirement, setSelectedRequirement] = useState<RequirementKey | null>(null);
 
   useEffect(() => {
-    setTargetCourseIds(savedPlan?.targetCourseIds ?? []);
-  }, [savedPlan?.savedAt, dataset.datasetVersionId]);
+    setTargetCourseIds(draftTargetCourseIds ?? savedPlan?.targetCourseIds ?? []);
+  }, [draftTargetCourseIds, savedPlan?.savedAt, dataset.datasetVersionId]);
 
   const derived = useMemo(() => deriveGraduationPlan(dataset, targetCourseIds), [dataset, targetCourseIds]);
   const draftPlan = useMemo<GraduationPlan>(() => ({
@@ -230,7 +234,11 @@ export function GraduationPlanner({
   const selectedRequirementCourses = useMemo(() => selectedRequirement ? coursesForRequirement(dataset, selectedRequirement) : [], [dataset, selectedRequirement]);
 
   function toggleTarget(courseId: string) {
-    setTargetCourseIds((current) => current.includes(courseId) ? current.filter((id) => id !== courseId) : [...current, courseId]);
+    const next = targetCourseIds.includes(courseId)
+      ? targetCourseIds.filter((id) => id !== courseId)
+      : [...targetCourseIds, courseId];
+    setTargetCourseIds(next);
+    onDraftChange(next);
   }
 
   async function save() {

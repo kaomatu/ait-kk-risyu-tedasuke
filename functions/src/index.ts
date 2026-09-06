@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { initializeApp } from "firebase-admin/app";
@@ -51,6 +51,20 @@ interface ProfileSnapshotSummary {
   savedAt: string;
 }
 
+interface StoredWorkspace {
+  activeTab: "overview" | "ingestion" | "graduation_planner" | "planner" | "rules";
+  planGenerated: boolean;
+  graduationPlanDraftTargetCourseIds: string[] | null;
+}
+
+interface StoredAccount {
+  uid: string;
+  username: string;
+  passwordSalt: string;
+  passwordHash: string;
+  createdAt: string;
+}
+
 function assertAppAccess(request: CallableRequest<unknown>) {
   if (request.auth?.token.appAccess !== true) {
     throw new HttpsError("unauthenticated", "この操作にはアプリへのアクセス認証が必要です。");
@@ -73,26 +87,149 @@ function passwordsMatch(received: string, expected: string) {
   return timingSafeEqual(receivedHash, expectedHash);
 }
 
-export const authenticateWithPassphrase = onCall(
+function normalizeUsername(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function assertValidUsername(username: string) {
+  if (!/^[a-z0-9_-]{3,32}$/.test(username)) {
+    throw new HttpsError("invalid-argument", "利用者IDは英数字・ハイフン・アンダースコアを使い、3〜32文字で入力してください。");
+  }
+}
+
+function assertValidAccountPassword(password: unknown): asserts password is string {
+  if (typeof password !== "string" || password.length < 12 || password.length > 128) {
+    throw new HttpsError("invalid-argument", "個人用パスワードは12〜128文字で入力してください。");
+  }
+}
+
+function accountCredentialRef(username: string) {
+  const accountId = createHash("sha256").update(username).digest("hex");
+  return getFirestore().collection("accountCredentials").doc(accountId);
+}
+
+function deriveAccountPasswordHash(password: string, salt: Buffer) {
+  return new Promise<Buffer>((resolve, reject) => {
+    scrypt(password, salt, 64, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(derivedKey);
+    });
+  });
+}
+
+async function accountPasswordMatches(password: string, account: StoredAccount) {
+  const actual = await deriveAccountPasswordHash(password, Buffer.from(account.passwordSalt, "hex"));
+  const expected = Buffer.from(account.passwordHash, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function createAccountCustomToken(uid: string, username: string) {
+  return getAuth().createCustomToken(uid, { appAccess: true, userAccount: true, username });
+}
+
+/**
+ * 旧バージョンは端末ごとの一時UIDで保存していた。旧セッションから初めて
+ * アカウント登録する場合だけ、本人の既存データを新しいアカウントへ引き継ぐ。
+ */
+async function copyLegacyPlanningData(sourceUid: string | undefined, targetUid: string) {
+  if (!sourceUid || sourceUid === targetUid) return false;
+  const db = getFirestore();
+  const sourceProfileRef = planningProfileRef(sourceUid);
+  const [profileSnapshot, graduationSnapshot, snapshotsSnapshot] = await Promise.all([
+    sourceProfileRef.get(),
+    graduationPlanRef(sourceUid).get(),
+    sourceProfileRef.collection("snapshots").get(),
+  ]);
+
+  const targetProfileRef = planningProfileRef(targetUid);
+  const planningWrites = db.batch();
+  let planningWriteCount = 0;
+  if (profileSnapshot.exists) {
+    planningWrites.set(targetProfileRef, profileSnapshot.data()!);
+    planningWriteCount += 1;
+  }
+  if (graduationSnapshot.exists) {
+    planningWrites.set(graduationPlanRef(targetUid), graduationSnapshot.data()!);
+    planningWriteCount += 1;
+  }
+  if (planningWriteCount > 0) await planningWrites.commit();
+
+  const targetSnapshots = targetProfileRef.collection("snapshots");
+  for (let offset = 0; offset < snapshotsSnapshot.docs.length; offset += 400) {
+    const batch = db.batch();
+    for (const document of snapshotsSnapshot.docs.slice(offset, offset + 400)) {
+      batch.set(targetSnapshots.doc(document.id), document.data());
+    }
+    await batch.commit();
+  }
+  return planningWriteCount > 0 || snapshotsSnapshot.docs.length > 0;
+}
+
+export const registerUserAccount = onCall(
   { secrets: [APP_ACCESS_PASSWORD] },
   async (request) => {
     const remoteAddress = request.rawRequest.ip ?? "unknown";
-    rateLimit(remoteAddress);
-    const password = request.data && typeof request.data.password === "string" ? request.data.password : "";
-    const deviceId = request.data && typeof request.data.deviceId === "string" ? request.data.deviceId : "";
+    rateLimit(`register:${remoteAddress}`);
+    const data = request.data as Record<string, unknown> | undefined;
+    const accessPassword = data?.accessPassword;
+    const username = normalizeUsername(data?.username);
+    const password = data?.password;
     // Firebase CLIの --data-file で登録した値に付く改行だけを除去する。
     // パスワード本文の空白は変更しない。
     const expected = APP_ACCESS_PASSWORD.value().replace(/\r?\n$/, "");
 
-    if (!password || !expected || !deviceId || deviceId.length > 128 || !passwordsMatch(password, expected)) {
+    if (typeof accessPassword !== "string" || !expected || !passwordsMatch(accessPassword, expected)) {
       throw new HttpsError("permission-denied", "パスワードが正しくありません。");
     }
+    assertValidUsername(username);
+    assertValidAccountPassword(password);
 
-    const uid = `passphrase-${createHmac("sha256", expected).update(deviceId).digest("hex")}`;
-    const customToken = await getAuth().createCustomToken(uid, { appAccess: true });
+    const uid = `account-${randomUUID()}`;
+    const salt = randomBytes(16);
+    const passwordHash = await deriveAccountPasswordHash(password, salt);
+    const account: StoredAccount = {
+      uid,
+      username,
+      passwordSalt: salt.toString("hex"),
+      passwordHash: passwordHash.toString("hex"),
+      createdAt: new Date().toISOString(),
+    };
+    const credentialRef = accountCredentialRef(username);
+    await getFirestore().runTransaction(async (transaction) => {
+      const existing = await transaction.get(credentialRef);
+      if (existing.exists) {
+        throw new HttpsError("already-exists", "この利用者IDはすでに使われています。別のIDを入力してください。");
+      }
+      transaction.create(credentialRef, account);
+    });
+
+    const legacyUid = request.auth?.token.appAccess === true && request.auth?.token.userAccount !== true
+      ? request.auth.uid
+      : undefined;
+    await copyLegacyPlanningData(legacyUid, uid);
+    const customToken = await createAccountCustomToken(uid, username);
     return { customToken };
   },
 );
+
+export const loginWithUserAccount = onCall(async (request) => {
+  const remoteAddress = request.rawRequest.ip ?? "unknown";
+  const data = request.data as Record<string, unknown> | undefined;
+  const username = normalizeUsername(data?.username);
+  const password = data?.password;
+  assertValidUsername(username);
+  assertValidAccountPassword(password);
+  rateLimit(`login:${remoteAddress}:${username}`);
+
+  const accountSnapshot = await accountCredentialRef(username).get();
+  const account = accountSnapshot.data() as Partial<StoredAccount> | undefined;
+  if (!account || typeof account.uid !== "string" || account.username !== username
+    || typeof account.passwordSalt !== "string" || typeof account.passwordHash !== "string"
+    || !(await accountPasswordMatches(password, account as StoredAccount))) {
+    throw new HttpsError("permission-denied", "利用者IDまたは個人用パスワードが正しくありません。");
+  }
+  return { customToken: await createAccountCustomToken(account.uid, account.username) };
+});
 
 export const getCatalog = onCall(async (request) => {
   assertAppAccess(request);
@@ -176,6 +313,21 @@ function validProfile(value: unknown): value is StoredProfile {
     && typeof profile.annualRegisteredCredits === "number";
 }
 
+function validWorkspace(value: unknown): value is StoredWorkspace {
+  if (!value || typeof value !== "object") return false;
+  const workspace = value as Record<string, unknown>;
+  return (workspace.activeTab === "overview"
+      || workspace.activeTab === "ingestion"
+      || workspace.activeTab === "graduation_planner"
+      || workspace.activeTab === "planner"
+      || workspace.activeTab === "rules")
+    && typeof workspace.planGenerated === "boolean"
+    && (workspace.graduationPlanDraftTargetCourseIds === null
+      || (Array.isArray(workspace.graduationPlanDraftTargetCourseIds)
+        && workspace.graduationPlanDraftTargetCourseIds.length <= 500
+        && workspace.graduationPlanDraftTargetCourseIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 200)));
+}
+
 function validCourseIdList(value: unknown) {
   return Array.isArray(value)
     && value.length <= 500
@@ -236,15 +388,23 @@ function requestedSnapshotNo(value: unknown) {
 export const loadStudentProfile = onCall(async (request) => {
   assertAppAccess(request);
   const snapshot = await planningProfileRef(request.auth!.uid).get();
-  return { profile: snapshot.exists ? snapshot.data()?.profile ?? null : null };
+  return {
+    profile: snapshot.exists ? snapshot.data()?.profile ?? null : null,
+    workspace: snapshot.exists ? snapshot.data()?.workspace ?? null : null,
+  };
 });
 
 export const saveStudentProfile = onCall(async (request) => {
   assertAppAccess(request);
   const profile = (request.data as Record<string, unknown> | undefined)?.profile;
+  const workspace = (request.data as Record<string, unknown> | undefined)?.workspace;
   assertValidProfile(profile);
+  if (!validWorkspace(workspace)) {
+    throw new HttpsError("invalid-argument", "保存する作業画面の形式が正しくありません。");
+  }
   await planningProfileRef(request.auth!.uid).set({
     profile,
+    workspace,
     updatedAt: new Date().toISOString(),
   });
   return { saved: true };

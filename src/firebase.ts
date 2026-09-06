@@ -4,6 +4,12 @@ import { getFunctions, httpsCallable, type Functions } from "firebase/functions"
 import type { Dataset, GraduationPlan, ProfileSnapshot, ProfileSnapshotSummary, StudentProfile } from "./types";
 
 export type CurriculumTreeImages = { page1: string; page2: string };
+export type AuthSession = {
+  user: User | null;
+  accountUsername: string | null;
+  isRegisteredAccount: boolean;
+  hasLegacyAccess: boolean;
+};
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -20,15 +26,6 @@ let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let functions: Functions | undefined;
 
-function getOrCreateDeviceId() {
-  const key = "ait-kk-device-id";
-  const existing = localStorage.getItem(key);
-  if (existing) return existing;
-  const next = crypto.randomUUID();
-  localStorage.setItem(key, next);
-  return next;
-}
-
 if (firebaseEnabled) {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
@@ -37,18 +34,41 @@ if (firebaseEnabled) {
 
 export { firebaseEnabled };
 
-export function subscribeToAuth(callback: (user: User | null) => void) {
+export function subscribeToAuth(callback: (session: AuthSession) => void) {
   if (!auth) {
-    callback(null);
+    callback({ user: null, accountUsername: null, isRegisteredAccount: false, hasLegacyAccess: false });
     return () => undefined;
   }
-  return onAuthStateChanged(auth, callback);
+  return onAuthStateChanged(auth, (user) => {
+    if (!user) {
+      callback({ user: null, accountUsername: null, isRegisteredAccount: false, hasLegacyAccess: false });
+      return;
+    }
+    void user.getIdTokenResult()
+      .then((token) => {
+        const isRegisteredAccount = token.claims.userAccount === true;
+        callback({
+          user,
+          accountUsername: typeof token.claims.username === "string" ? token.claims.username : null,
+          isRegisteredAccount,
+          hasLegacyAccess: token.claims.appAccess === true && !isRegisteredAccount,
+        });
+      })
+      .catch(() => callback({ user, accountUsername: null, isRegisteredAccount: false, hasLegacyAccess: false }));
+  });
 }
 
-export async function loginWithPassphrase(password: string) {
+export async function registerUserAccount(payload: { accessPassword: string; username: string; password: string }) {
   if (!auth || !functions) throw new Error("Firebaseの接続設定が未完了です。");
-  const authenticate = httpsCallable<{ password: string; deviceId: string }, { customToken: string }>(functions, "authenticateWithPassphrase");
-  const response = await authenticate({ password, deviceId: getOrCreateDeviceId() });
+  const register = httpsCallable<typeof payload, { customToken: string }>(functions, "registerUserAccount");
+  const response = await register(payload);
+  await signInWithCustomToken(auth, response.data.customToken);
+}
+
+export async function loginWithUserAccount(payload: { username: string; password: string }) {
+  if (!auth || !functions) throw new Error("Firebaseの接続設定が未完了です。");
+  const login = httpsCallable<typeof payload, { customToken: string }>(functions, "loginWithUserAccount");
+  const response = await login(payload);
   await signInWithCustomToken(auth, response.data.customToken);
 }
 
@@ -98,21 +118,27 @@ export async function createIngestionJob(payload: {
   return (await createJob(payload)).data;
 }
 
-export async function loadStudentProfile() {
-  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") return null;
+export async function loadStudentProfile(): Promise<{ profile: unknown | null; workspace: unknown | null }> {
+  if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") {
+    try {
+      return { profile: JSON.parse(localStorage.getItem("ait-kk-local-preview-profile") ?? "null"), workspace: null };
+    } catch {
+      return { profile: null, workspace: null };
+    }
+  }
   if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
-  const loadProfile = httpsCallable<undefined, { profile: unknown | null }>(functions, "loadStudentProfile");
-  return (await loadProfile()).data.profile;
+  const loadProfile = httpsCallable<undefined, { profile: unknown | null; workspace: unknown | null }>(functions, "loadStudentProfile");
+  return (await loadProfile()).data;
 }
 
-export async function saveStudentProfile(profile: unknown) {
+export async function saveStudentProfile(profile: unknown, workspace: unknown) {
   if (import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true") {
     localStorage.setItem("ait-kk-local-preview-profile", JSON.stringify(profile));
     return;
   }
   if (!functions) throw new Error("Firebaseの接続設定が未完了です。");
-  const saveProfile = httpsCallable<{ profile: unknown }, { saved: boolean }>(functions, "saveStudentProfile");
-  await saveProfile({ profile });
+  const saveProfile = httpsCallable<{ profile: unknown; workspace: unknown }, { saved: boolean }>(functions, "saveStudentProfile");
+  await saveProfile({ profile, workspace });
 }
 
 const localGraduationPlanKey = "ait-kk-local-preview-graduation-plan";

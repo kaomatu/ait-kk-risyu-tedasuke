@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loginWithPassphrase, logout, saveGraduationPlan, saveProfileSnapshot, subscribeToAuth } from "./firebase";
+import { createIngestionJob, createInitialKkDataset, firebaseEnabled, listProfileSnapshots, loadCatalog, loadGraduationPlan, loadProfileSnapshot, loadStudentProfile, loginWithUserAccount, logout, registerUserAccount, saveGraduationPlan, saveProfileSnapshot, saveStudentProfile, subscribeToAuth } from "./firebase";
 import { activeAnnualCap, autoGraduationPlanWanted, autoRequiredCourseIds, calculateProgress, canUseOffering, generatePlan, recommendCourses, requiredScheduleSlots } from "./planEngine";
 import { cycleCurrentTermCourseIntent, cycleFutureCourseIntent, filterCoursesByQuery, filterPlannerCoursePicker, profileForPickerSchedulePreview, selectedPlannerCourseIds, type CoursePickerTermScope } from "./coursePicker";
 import { createPlanScheduleSegments } from "./planSchedule";
@@ -39,6 +39,17 @@ function profileFromUnknown(value: unknown): StudentProfile | null {
   return { ...defaultProfile(), ...candidate };
 }
 
+function workspaceFromUnknown(value: unknown): { activeTab: Tab; planGenerated: boolean; graduationPlanDraftTargetCourseIds: string[] | null } | null {
+  if (!value || typeof value !== "object") return null;
+  const workspace = value as { activeTab?: unknown; planGenerated?: unknown; graduationPlanDraftTargetCourseIds?: unknown };
+  const allowedTabs: Tab[] = ["overview", "ingestion", "graduation_planner", "planner", "rules"];
+  if (!allowedTabs.includes(workspace.activeTab as Tab) || typeof workspace.planGenerated !== "boolean"
+    || (workspace.graduationPlanDraftTargetCourseIds !== null
+      && (!Array.isArray(workspace.graduationPlanDraftTargetCourseIds)
+        || !workspace.graduationPlanDraftTargetCourseIds.every((id) => typeof id === "string")))) return null;
+  return { activeTab: workspace.activeTab as Tab, planGenerated: workspace.planGenerated, graduationPlanDraftTargetCourseIds: workspace.graduationPlanDraftTargetCourseIds as string[] | null };
+}
+
 function labelRequirement(course: Course) {
   return course.requirementType === "required" ? "必修" : course.requirementType === "required_elective" ? "選択必修" : course.requirementType === "non_counting" ? "要件外" : "選択";
 }
@@ -58,6 +69,8 @@ export default function App() {
   const localPreview = import.meta.env.DEV && import.meta.env.VITE_LOCAL_PREVIEW_AUTH === "true";
   const [userReady, setUserReady] = useState(false);
   const [hasAccess, setHasAccess] = useState(localPreview && sessionStorage.getItem("ait-kk-local-preview-auth") === "1");
+  const [accountUsername, setAccountUsername] = useState<string | null>(null);
+  const [legacyAccessAvailable, setLegacyAccessAvailable] = useState(false);
   const [tab, setTab] = useState<Tab>("overview");
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [loadingDataset, setLoadingDataset] = useState(false);
@@ -65,12 +78,19 @@ export default function App() {
   const [profile, setProfile] = useState<StudentProfile>(defaultProfile);
   const [plan, setPlan] = useState<PlanResult | null>(null);
   const [graduationPlan, setGraduationPlan] = useState<GraduationPlan | null>(null);
+  const [graduationPlanDraftTargetCourseIds, setGraduationPlanDraftTargetCourseIds] = useState<string[] | null>(null);
+  const [graduationPlanReady, setGraduationPlanReady] = useState(false);
   const [graduationPlanBusy, setGraduationPlanBusy] = useState(false);
   const [snapshots, setSnapshots] = useState<ProfileSnapshotSummary[]>([]);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [profileReady, setProfileReady] = useState(localPreview && sessionStorage.getItem("ait-kk-local-preview-auth") === "1");
+  const [restoreGeneratedPlan, setRestoreGeneratedPlan] = useState(false);
 
-  useEffect(() => subscribeToAuth((user) => {
-    setHasAccess(Boolean(user) || (localPreview && sessionStorage.getItem("ait-kk-local-preview-auth") === "1"));
+  useEffect(() => subscribeToAuth((session) => {
+    const localAccess = localPreview && sessionStorage.getItem("ait-kk-local-preview-auth") === "1";
+    setHasAccess(session.isRegisteredAccount || localAccess);
+    setAccountUsername(session.accountUsername);
+    setLegacyAccessAvailable(session.hasLegacyAccess);
     setUserReady(true);
   }), [localPreview]);
 
@@ -80,25 +100,49 @@ export default function App() {
       setSnapshots([]);
       setProfile(defaultProfile());
       setGraduationPlan(null);
-      return;
+      setGraduationPlanDraftTargetCourseIds(null);
+      setGraduationPlanReady(false);
+      setPlan(null);
+      setProfileReady(false);
+      setRestoreGeneratedPlan(false);
+      setTab("overview");
+      return undefined;
     }
+    let cancelled = false;
     setLoadingDataset(true);
+    setProfileReady(false);
+    setGraduationPlanReady(false);
     loadCatalog()
-      .then((next) => setDataset(next))
-      .catch((error: unknown) => setMessage(error instanceof Error ? error.message : "カタログの取得に失敗しました。"))
-      .finally(() => setLoadingDataset(false));
+      .then((next) => { if (!cancelled) setDataset(next); })
+      .catch((error: unknown) => { if (!cancelled) setMessage(error instanceof Error ? error.message : "カタログの取得に失敗しました。"); })
+      .finally(() => { if (!cancelled) setLoadingDataset(false); });
     listProfileSnapshots()
-      .then(setSnapshots)
-      .catch(() => setMessage("保存済みの履修計画一覧を読み込めませんでした。新しい計画として続けられます。"));
+      .then((next) => { if (!cancelled) setSnapshots(next); })
+      .catch(() => { if (!cancelled) setMessage("保存済みの履修計画一覧を読み込めませんでした。新しい計画として続けられます。"); });
     loadGraduationPlan()
-      .then(setGraduationPlan)
-      .catch(() => setMessage("卒業計画を読み込めませんでした。新しい計画として続けられます。"));
+      .then((next) => { if (!cancelled) setGraduationPlan(next); })
+      .catch(() => { if (!cancelled) setMessage("卒業計画を読み込めませんでした。新しい計画として続けられます。"); })
+      .finally(() => { if (!cancelled) setGraduationPlanReady(true); });
+    loadStudentProfile()
+      .then(({ profile: savedProfile, workspace }) => {
+        if (cancelled) return;
+        setProfile(profileFromUnknown(savedProfile) ?? defaultProfile());
+        const savedWorkspace = workspaceFromUnknown(workspace);
+        if (savedWorkspace) {
+          setTab(savedWorkspace.activeTab);
+          setRestoreGeneratedPlan(savedWorkspace.planGenerated);
+          setGraduationPlanDraftTargetCourseIds(savedWorkspace.graduationPlanDraftTargetCourseIds);
+        }
+      })
+      .catch(() => { if (!cancelled) setMessage("前回の作業内容を読み込めませんでした。新しい計画として続けられます。"); })
+      .finally(() => { if (!cancelled) setProfileReady(true); });
+    return () => { cancelled = true; };
   }, [hasAccess]);
 
   const planProgress = useMemo(() => dataset ? calculateProgress(dataset, profile, plan) : null, [dataset, profile, plan]);
 
   useEffect(() => {
-    if (!dataset) return;
+    if (!dataset || !profileReady) return;
     const requiredIds = autoRequiredCourseIds(dataset, profile);
     setProfile((current) => {
       const desired = new Set(requiredIds);
@@ -135,7 +179,26 @@ export default function App() {
       return unchanged ? current : { ...current, wanted, autoRequiredCourseIds: nextAutoIds, autoGraduationPlanWanted: longTermWanted, hardBlockedSlots, softBlockedSlots };
     });
     setPlan(null);
-  }, [dataset, graduationPlan, profile.currentGrade, profile.term, profile.completedCourseIds]);
+  }, [dataset, graduationPlan, profile.currentGrade, profile.term, profile.completedCourseIds, profileReady]);
+
+  useEffect(() => {
+    if (!dataset || !profileReady || !graduationPlanReady || !restoreGeneratedPlan) return;
+    setPlan(generatePlan(dataset, profile));
+    setRestoreGeneratedPlan(false);
+  }, [dataset, profile, profileReady, graduationPlanReady, restoreGeneratedPlan]);
+
+  useEffect(() => {
+    if (!hasAccess || !profileReady) return undefined;
+    const timer = window.setTimeout(() => {
+      void saveStudentProfile(profile, {
+        activeTab: tab,
+        planGenerated: plan !== null,
+        graduationPlanDraftTargetCourseIds,
+      })
+        .catch(() => setMessage("作業内容を自動保存できませんでした。通信状態を確認してください。"));
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [hasAccess, profileReady, profile, tab, plan, graduationPlan, graduationPlanDraftTargetCourseIds]);
 
   function patchProfile(patch: Partial<StudentProfile>) {
     setProfile((current) => ({ ...current, ...patch }));
@@ -194,6 +257,7 @@ export default function App() {
     try {
       const saved = await saveGraduationPlan(nextPlan);
       setGraduationPlan(saved);
+      setGraduationPlanDraftTargetCourseIds(null);
       setMessage("卒業までの科目計画を保存しました。ツール2では今学期に該当する科目を自動選択します。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "卒業計画を保存できませんでした。");
@@ -204,7 +268,7 @@ export default function App() {
   }
 
   if (!userReady) return <main className="loading-screen">接続を確認しています…</main>;
-  if (!hasAccess) return <AccessGate localPreview={localPreview} onLocalAccess={() => setHasAccess(true)} />;
+  if (!hasAccess) return <AccessGate localPreview={localPreview} hasLegacyAccess={legacyAccessAvailable} onLocalAccess={() => setHasAccess(true)} />;
 
   return (
     <main className="app-shell">
@@ -213,7 +277,7 @@ export default function App() {
           <span className="brand-mark">履</span>
           <div><strong>履修てだすけ</strong><small>{dataset ? `${dataset.program.entryDate}入学 / ${dataset.program.code}` : "認証済みワークスペース"}</small></div>
         </div>
-        <div className="secure-badge"><span>●</span> パスワード認証済み</div>
+        <div className="secure-badge"><span>●</span> {accountUsername ? `${accountUsername} として保存・同期中` : "ローカル確認モード"}</div>
         <button className="text-button" onClick={() => { void logout(); setHasAccess(false); }}>退出</button>
       </header>
 
@@ -229,12 +293,13 @@ export default function App() {
 
       <section className="content">
         {loadingDataset && <div className="inline-loading">データを読み込んでいます…</div>}
-        {!loadingDataset && !dataset && !localPreview && <DatasetSetup onSeed={seedDataset} />}
-        {dataset && tab === "overview" && <Overview dataset={dataset} profile={profile} progress={planProgress} onOpenPlanner={() => setTab("planner")} />}
-        {dataset && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} onReapplyReviewedDataset={() => seedDataset("reapply")} />}
-        {dataset && tab === "graduation_planner" && <GraduationPlanner dataset={dataset} profile={profile} savedPlan={graduationPlan} busy={graduationPlanBusy} onSave={saveCurrentGraduationPlan} />}
-        {dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} graduationPlan={graduationPlan} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} snapshots={snapshots} snapshotBusy={snapshotBusy} onSaveSnapshot={saveNumberedProfile} onLoadSnapshot={loadNumberedProfile} />}
-        {dataset && tab === "rules" && <Rules dataset={dataset} />}
+        {!profileReady && <div className="inline-loading">前回の作業内容を復元しています…</div>}
+        {profileReady && !loadingDataset && !dataset && !localPreview && <DatasetSetup onSeed={seedDataset} />}
+        {profileReady && dataset && tab === "overview" && <Overview dataset={dataset} profile={profile} progress={planProgress} onOpenPlanner={() => setTab("planner")} />}
+        {profileReady && dataset && tab === "ingestion" && <IngestionTool localPreview={localPreview} onMessage={setMessage} onReapplyReviewedDataset={() => seedDataset("reapply")} />}
+        {profileReady && dataset && tab === "graduation_planner" && <GraduationPlanner dataset={dataset} profile={profile} savedPlan={graduationPlan} draftTargetCourseIds={graduationPlanDraftTargetCourseIds ?? undefined} busy={graduationPlanBusy} onDraftChange={setGraduationPlanDraftTargetCourseIds} onSave={saveCurrentGraduationPlan} />}
+        {profileReady && dataset && tab === "planner" && <Planner dataset={dataset} profile={profile} plan={plan} progress={planProgress} graduationPlan={graduationPlan} patchProfile={patchProfile} onGenerate={() => setPlan(generatePlan(dataset, profile))} snapshots={snapshots} snapshotBusy={snapshotBusy} onSaveSnapshot={saveNumberedProfile} onLoadSnapshot={loadNumberedProfile} />}
+        {profileReady && dataset && tab === "rules" && <Rules dataset={dataset} />}
       </section>
     </main>
   );
@@ -244,8 +309,12 @@ function TabButton({ current, target, onClick, children }: { current: Tab; targe
   return <button className={current === target ? "tab active" : "tab"} onClick={() => onClick(target)}>{children}</button>;
 }
 
-function AccessGate({ localPreview, onLocalAccess }: { localPreview: boolean; onLocalAccess: () => void }) {
+function AccessGate({ localPreview, hasLegacyAccess, onLocalAccess }: { localPreview: boolean; hasLegacyAccess: boolean; onLocalAccess: () => void }) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [accessPassword, setAccessPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -260,7 +329,12 @@ function AccessGate({ localPreview, onLocalAccess }: { localPreview: boolean; on
         onLocalAccess();
         return;
       }
-      await loginWithPassphrase(password);
+      if (mode === "register") {
+        if (password !== passwordConfirmation) throw new Error("個人用パスワードと確認入力が一致しません。");
+        await registerUserAccount({ accessPassword, username, password });
+      } else {
+        await loginWithUserAccount({ username, password });
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "認証に失敗しました。");
     } finally {
@@ -274,14 +348,19 @@ function AccessGate({ localPreview, onLocalAccess }: { localPreview: boolean; on
         <div className="access-icon" aria-hidden="true">⌁</div>
         <p className="eyebrow">PRIVATE CURRICULUM WORKSPACE</p>
         <h1>履修てだすけ</h1>
-        <p>教育課程・時間割・履修計画を、専攻内だけで安全に扱うための入口です。</p>
+        <p>利用者ごとに修得履歴・選択科目・卒業計画・保存済みプランを分けて保管し、次回も前回の状態から再開できます。</p>
+        {!localPreview && <div className="access-mode" role="tablist" aria-label="アカウント操作"><button type="button" className={mode === "login" ? "active" : ""} aria-selected={mode === "login"} onClick={() => { setMode("login"); setError(null); }}>ログイン</button><button type="button" className={mode === "register" ? "active" : ""} aria-selected={mode === "register"} onClick={() => { setMode("register"); setError(null); }}>新規登録</button></div>}
         <form onSubmit={handleSubmit}>
-          <label htmlFor="password">アクセスパスワード</label>
-          <input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="パスワードを入力" required />
+          {mode === "register" && !localPreview && <><label htmlFor="access-password">共通アクセスパスワード</label><input id="access-password" type="password" autoComplete="off" value={accessPassword} onChange={(event) => setAccessPassword(event.target.value)} placeholder="管理者から共有されたパスワード" required /></>}
+          {!localPreview && <label htmlFor="account-username">利用者ID</label>}
+          {!localPreview && <input id="account-username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="例: kk_taro" minLength={3} maxLength={32} required />}
+          <label htmlFor="password">{localPreview ? "ローカル確認用パスワード" : "個人用パスワード"}</label>
+          <input id="password" type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={localPreview ? "任意の文字を入力" : "12文字以上で入力"} minLength={localPreview ? undefined : 12} maxLength={128} required />
+          {mode === "register" && !localPreview && <><label htmlFor="password-confirmation">個人用パスワード（確認）</label><input id="password-confirmation" type="password" autoComplete="new-password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} placeholder="もう一度入力" minLength={12} maxLength={128} required /></>}
           {error && <p className="form-error" role="alert">{error}</p>}
-          <button className="primary-button full" disabled={busy}>{busy ? "確認中…" : "安全に入室する"}</button>
+          <button className="primary-button full" disabled={busy}>{busy ? "確認中…" : localPreview ? "ローカルで確認する" : mode === "register" ? "アカウントを作成する" : "ログインして再開する"}</button>
         </form>
-        <p className="security-note">パスワードはブラウザに保存せず、Firebase上のサーバーで照合します。</p>
+        <p className="security-note">個人用パスワードはブラウザに保存せず、Firebase上でソルト付きハッシュとして照合します。利用者IDと個人用パスワードは忘れないよう保管してください。{hasLegacyAccess ? " この端末で以前に保存した卒業計画・番号付き保存データは、新規登録時にこのアカウントへ引き継がれます。" : ""}</p>
         {!firebaseEnabled && !localPreview && <p className="form-error">Firebase接続設定がまだ完了していません。</p>}
       </section>
     </main>

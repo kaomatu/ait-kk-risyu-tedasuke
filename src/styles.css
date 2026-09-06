@@ -21,6 +21,9 @@ button:disabled { cursor: not-allowed; opacity: .58; }
 label { display: grid; gap: 8px; font-size: 13px; font-weight: 700; color: #33405b; }
 input, select { min-height: 44px; border: 1px solid #d7ddea; border-radius: 10px; background: #fff; padding: 0 12px; color: #18233e; outline-color: #594bb6; }
 .access-card form { display: grid; gap: 15px; margin-top: 24px; }
+.access-mode { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 22px; padding: 4px; background: #eef1f8; border-radius: 11px; }
+.access-mode button { min-height: 38px; color: #66728a; background: transparent; border: 0; border-radius: 8px; font-size: 12px; font-weight: 800; }
+.access-mode button.active { color: #34499d; background: #fff; box-shadow: 0 1px 5px rgba(45, 59, 104, .12); }
 .primary-button { border: 0; color: #fff; background: #2e3e96; padding: 12px 17px; min-height: 45px; border-radius: 11px; font-weight: 800; box-shadow: 0 6px 16px rgba(46,62,150,.2); }
 .primary-button:hover:not(:disabled) { background: #22307a; transform: translateY(-1px); }
 .full { width: 100%; }
