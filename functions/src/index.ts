@@ -18,6 +18,46 @@ const PASSWORD_WINDOW_MS = 60_000;
 const MAX_LOGIN_ATTEMPTS = 8;
 const loginAttempts = new Map<string, number[]>();
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 既に公開済みのKKデータセットへ、2026年度教育課程表117頁の言語系8単位要件を一度だけ補う。
+ * 科目マスタ全体を置き換えず、該当18科目の判定タグと卒業要件だけを更新するため、利用者の既存データを保つ。
+ */
+function needsKkLanguageRequirementMigration(dataset: Record<string, unknown>) {
+  const program = isRecord(dataset.program) ? dataset.program : null;
+  const policies = isRecord(dataset.policies) ? dataset.policies : null;
+  const graduation = policies && isRecord(policies.graduation) ? policies.graduation : null;
+  return program?.code === "KK" && typeof graduation?.language !== "number";
+}
+
+function migrateKkLanguageRequirement(dataset: Record<string, unknown>) {
+  const sourceLanguageTags = new Map(
+    createKkSeedDataset().courses
+      .filter((course) => course.tags?.includes("graduation_language"))
+      .map((course) => [course.id, course.tags]),
+  );
+  const courses = Array.isArray(dataset.courses)
+    ? dataset.courses.map((course) => {
+      if (!isRecord(course)) return course;
+      const tags = typeof course.id === "string" ? sourceLanguageTags.get(course.id) : undefined;
+      return tags ? { ...course, tags } : course;
+    })
+    : dataset.courses;
+  const policies = isRecord(dataset.policies) ? dataset.policies : {};
+  const graduation = isRecord(policies.graduation) ? policies.graduation : {};
+  const sourceStatus = typeof dataset.sourceStatus === "string" ? dataset.sourceStatus : "published_dataset";
+
+  return {
+    ...dataset,
+    sourceStatus: `${sourceStatus}; language_8_credit_requirement_applied`,
+    policies: { ...policies, graduation: { ...graduation, language: 8 } },
+    courses,
+  };
+}
+
 interface StoredProfile {
   currentGrade: number;
   term: "spring" | "fall";
@@ -253,8 +293,15 @@ export const loginWithUserAccount = onCall(async (request) => {
 
 export const getCatalog = onCall(async (request) => {
   assertAppAccess(request);
-  const snapshot = await getFirestore().collection("datasets").doc(DATASET_ID).get();
-  return { dataset: snapshot.exists ? snapshot.data() : null };
+  const datasetRef = getFirestore().collection("datasets").doc(DATASET_ID);
+  const snapshot = await datasetRef.get();
+  const dataset = snapshot.data() as Record<string, unknown> | undefined;
+  if (dataset && needsKkLanguageRequirementMigration(dataset)) {
+    const migrated = migrateKkLanguageRequirement(dataset);
+    await datasetRef.set({ ...migrated, updatedAt: new Date().toISOString(), seededBy: "server-language-requirement-migration" });
+    return { dataset: migrated };
+  }
+  return { dataset: dataset ?? null };
 });
 
 /**

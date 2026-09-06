@@ -15,6 +15,7 @@ const graduationRequirements: Array<{ key: RequirementKey; title: string; descri
   { key: "generalElective", title: "総合教育・選択", description: "総合教育科目の選択として計上される単位" },
   { key: "generalTotal", title: "総合教育・合計", description: "総合教育科目として計上される単位の合計" },
   { key: "english", title: "英語系", description: "英語系として計上される単位" },
+  { key: "language", title: "言語系", description: "教育課程表の「ここから8単位以上」に含まれる言語系として計上される単位" },
   { key: "total", title: "卒業要件・総計", description: "卒業要件に計上される全区分の単位" },
 ];
 
@@ -27,6 +28,7 @@ function coursesForRequirement(dataset: Dataset, key: RequirementKey) {
     if (!isGraduationCourse(course)) return false;
     if (key === "total") return true;
     if (key === "english") return course.tags?.includes("english") ?? false;
+    if (key === "language") return course.tags?.includes("graduation_language") ?? false;
     if (key === "specializedTotal") return course.category === "specialized";
     if (key === "specializedRequired") return course.category === "specialized" && (course.requirementType === "required" || course.requirementType === "required_elective");
     if (key === "specializedElective") return course.category === "specialized" && (course.requirementType === "elective" || course.requirementType === "required_elective");

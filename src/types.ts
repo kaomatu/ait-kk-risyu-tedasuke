@@ -69,6 +69,7 @@ export interface Dataset {
       generalElective: number;
       generalTotal: number;
       english: number;
+      language: number;
       total: number;
     };
   };

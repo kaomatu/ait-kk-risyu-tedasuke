@@ -359,6 +359,10 @@ export function recommendCourses(dataset: Dataset, profile: StudentProfile, plan
         reasons.push("英語系の卒業要件を補えます");
         score += 30;
       }
+      if (course.tags?.includes("graduation_language") && progress.language < dataset.policies.graduation.language) {
+        reasons.push("言語系（8単位）の卒業要件を補えます");
+        score += 30;
+      }
       if (course.category === "specialized" && course.recommendedGrade === profile.currentGrade) {
         reasons.push("現在の学年に配当された専門科目です");
         score += 15;
@@ -406,6 +410,7 @@ function calculateCreditProgress(dataset: Dataset, profile: StudentProfile, plan
   const generalElective = creditSum(allGraduation, (course) => course.category === "general" && course.requirementType === "elective")
     + Math.max(0, generalRequiredElective - GENERAL_REQUIRED_ELECTIVE_CREDITS);
   const english = creditSum(allGraduation, (course) => course.tags?.includes("english") ?? false);
+  const language = creditSum(allGraduation, (course) => course.tags?.includes("graduation_language") ?? false);
 
   return {
     completedProgression,
@@ -417,6 +422,7 @@ function calculateCreditProgress(dataset: Dataset, profile: StudentProfile, plan
     generalElective,
     generalTotal: generalRequired + generalElective,
     english,
+    language,
     graduationTotal: creditSum(allGraduation, () => true),
   };
 }

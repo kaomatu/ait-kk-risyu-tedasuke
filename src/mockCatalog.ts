@@ -12,7 +12,7 @@ export const mockCatalog: Dataset = {
     honorsAnnualCap: 52,
     honorsGpaThreshold: 3,
     progression: [{ toGrade: 2, minCredits: 35, minGpa: 0.5 }, { toGrade: 3, minCredits: 70 }, { toGrade: 4, minCredits: 105 }],
-    graduation: { specializedRequired: 32, specializedElective: 68, specializedTotal: 100, generalRequired: 8, generalElective: 16, generalTotal: 24, english: 6, total: 124 },
+    graduation: { specializedRequired: 32, specializedElective: 68, specializedTotal: 100, generalRequired: 8, generalElective: 16, generalTotal: 24, english: 6, language: 8, total: 124 },
   },
   courses: [
     {
@@ -24,7 +24,7 @@ export const mockCatalog: Dataset = {
       offerings: [{ id: "demo-P201-A", term: "fall", classCode: "A", weekday: "tue", periods: [1, 2], lottery: false }],
     },
     {
-      id: "demo.G101", code: "G101", name: "アカデミック英語", credits: 2, category: "general", requirementType: "required_elective", recommendedGrade: 1, recommendedTerm: "spring", tags: ["english"],
+      id: "demo.G101", code: "G101", name: "アカデミック英語", credits: 2, category: "general", requirementType: "required_elective", recommendedGrade: 1, recommendedTerm: "spring", tags: ["english", "graduation_language"],
       offerings: [{ id: "demo-G101-A", term: "spring", classCode: "A", weekday: "wed", periods: [3], lottery: true }],
     },
     {
@@ -33,4 +33,3 @@ export const mockCatalog: Dataset = {
     },
   ],
 };
-
